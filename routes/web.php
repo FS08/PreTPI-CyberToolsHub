@@ -2,22 +2,36 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
+use Illuminate\Http\Request;
 
 // ---------- Public pages ----------
 Route::view('/', 'home')->name('home');          // serves resources/views/home.blade.php
 Route::view('/about', 'about')->name('about');   // serves resources/views/about.blade.php
 
 // ---------- Dashboard (Breeze redirect after registration) ----------
-// Use Route::view(...)->middleware([...])  (correct chaining)
 Route::view('/dashboard', 'dashboard')
     ->middleware(['auth', 'verified'])
     ->name('dashboard');
 
 // ---------- Private pages (login + verified email required) ----------
 Route::middleware(['auth', 'verified'])->group(function () {
+    // GET: scan page (form)
     Route::view('/scan', 'create')->name('scan.create');        // serves resources/views/create.blade.php
-    Route::view('/history', 'history')->name('scan.history');   // serves resources/views/history.blade.php
-    Route::view('/stats', 'stats')->name('stats');              // serves resources/views/stats.blade.php
+
+    // POST: scan upload handler (receives .eml file) — NO parsing here
+    Route::post('/scan', function (Request $request) {
+        // Server-side validation: require .eml file, correct MIME, max 15MB
+        $request->validate([
+            'eml' => ['required', 'file', 'mimetypes:message/rfc822', 'max:15360'],
+        ]);
+
+        // Only confirm receipt; parsing will be implemented next
+        return back()->with('ok', 'File received successfully.');
+    })->name('scan.store');
+
+    // Other protected pages (placeholders)
+    Route::view('/history', 'history')->name('scan.history');   // resources/views/history.blade.php
+    Route::view('/stats', 'stats')->name('stats');              // resources/views/stats.blade.php
 });
 
 // ---------- Breeze profile pages (login required) ----------
