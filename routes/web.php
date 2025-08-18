@@ -23,6 +23,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // Server-side validation: require .eml file, correct MIME, max 15MB
         $request->validate([
             'eml' => ['required', 'file', 'mimetypes:message/rfc822', 'max:15360'],
+        ], [
+            'eml.mimetypes' => 'Only .eml files are allowed.',
+            'eml.max' => 'The email must not exceed 15MB.',
         ]);
 
         // Only confirm receipt; parsing will be implemented next
