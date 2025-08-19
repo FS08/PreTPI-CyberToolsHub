@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
-use Illuminate\Http\Request;
+use App\Http\Controllers\ScanController; // <-- add controller import
 
 // ---------- Public pages ----------
 Route::view('/', 'home')->name('home');          // serves resources/views/home.blade.php
@@ -18,19 +18,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // GET: scan page (form)
     Route::view('/scan', 'create')->name('scan.create');        // serves resources/views/create.blade.php
 
-    // POST: scan upload handler (receives .eml file) — NO parsing here
-    Route::post('/scan', function (Request $request) {
-        // Server-side validation: require .eml file, correct MIME, max 15MB
-        $request->validate([
-            'eml' => ['required', 'file', 'mimetypes:message/rfc822', 'max:15360'],
-        ], [
-            'eml.mimetypes' => 'Only .eml files are allowed.',
-            'eml.max' => 'The email must not exceed 15MB.',
-        ]);
-
-        // Only confirm receipt; parsing will be implemented next
-        return back()->with('ok', 'File received successfully.');
-    })->name('scan.store');
+    // POST: scan upload handler (controller, validation only — no parsing)
+    Route::post('/scan', [ScanController::class, 'store'])->name('scan.store');
 
     // Other protected pages (placeholders)
     Route::view('/history', 'history')->name('scan.history');   // resources/views/history.blade.php
