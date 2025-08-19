@@ -3,11 +3,14 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use ZBateson\MailMimeParser\MailMimeParser;    // <-- new parser
-use ZBateson\MailMimeParser\Message;           // (optional type hint)
+use ZBateson\MailMimeParser\MailMimeParser;
+use ZBateson\MailMimeParser\Message;
 
 class ScanController extends Controller
 {
+    /**
+     * Handle upload, parse in memory, and extract basic indicators (URLs).
+     */
     public function store(Request $request)
     {
         // 1) Validation unchanged
@@ -36,7 +39,7 @@ class ScanController extends Controller
         $subject = $message->getHeaderValue('subject');
         $date    = $message->getHeaderValue('date');
 
-        // 5) Bodies (store only lengths)
+        // 5) Bodies (keep both for indicator extraction; store only lengths)
         $textBody = $message->getTextContent() ?? '';
         $htmlBody = $message->getHtmlContent() ?? '';
 
@@ -46,7 +49,11 @@ class ScanController extends Controller
         // 7) Sender domain (best‑effort)
         $fromDomain = $this->extractDomainFromAddress($from);
 
-        // 8) Build result payload
+        // 8) URL extraction (V1: regex on text + stripped HTML)
+        $combined = $textBody . "\n" . strip_tags($htmlBody);
+        $urls     = $this->extractUrls($combined);   // normalized + deduped list
+
+        // 9) Build result payload
         $results = [
             'from'        => $from,
             'fromDomain'  => $fromDomain,
@@ -60,11 +67,18 @@ class ScanController extends Controller
             'attachments' => [
                 'count' => $attachCount,
             ],
+            'urls'        => $urls, // <-- new
         ];
 
-        return back()->with('ok', 'File parsed in memory.')->with('results', $results);
+        // Flash results back to the page
+        return back()
+            ->with('ok', 'File parsed in memory.')
+            ->with('results', $results);
     }
 
+    /**
+     * Best‑effort domain extraction from a From: header.
+     */
     private function extractDomainFromAddress(string $from): ?string
     {
         if (preg_match('/<([^>]+)>/', $from, $m)) {
@@ -77,5 +91,58 @@ class ScanController extends Controller
 
         $parts = explode('@', $email);
         return count($parts) === 2 ? strtolower($parts[1]) : null;
+    }
+
+    /**
+     * Extracts http/https URLs from a string, normalizes, dedupes, and filters schemes.
+     */
+    private function extractUrls(string $text): array
+    {
+        $urls = [];
+
+        // Basic regex for http/https (avoid quotes/brackets/whitespace)
+        if (preg_match_all('~\bhttps?://[^\s<>"\'(){}\[\]]+~i', $text, $m)) {
+            foreach ($m[0] as $raw) {
+                $url = $this->normalizeUrl($raw);
+                if ($url !== null) {
+                    $urls[] = $url;
+                }
+            }
+        }
+
+        // Deduplicate while preserving order
+        $urls = array_values(array_unique($urls));
+
+        return $urls;
+    }
+
+    /**
+     * Normalizes a URL:
+     *  - trims trailing punctuation
+     *  - lowercases host only (path/query casing kept)
+     *  - filters to http/https schemes
+     */
+    private function normalizeUrl(string $raw): ?string
+    {
+        // Trim common trailing punctuation (.),),;,]
+        $raw = rtrim($raw, ".,);]");
+
+        $parts = parse_url($raw);
+        if (!$parts || empty($parts['scheme']) || empty($parts['host'])) {
+            return null;
+        }
+
+        $scheme = strtolower($parts['scheme']);
+        if (!in_array($scheme, ['http', 'https'], true)) {
+            return null; // drop javascript:, data:, etc.
+        }
+
+        // Lowercase host; rebuild URL
+        $host   = strtolower($parts['host']);
+        $path   = $parts['path']  ?? '';
+        $query  = isset($parts['query']) ? ('?' . $parts['query']) : '';
+        $frag   = isset($parts['fragment']) ? ('#' . $parts['fragment']) : '';
+
+        return $scheme . '://' . $host . $path . $query . $frag;
     }
 }
