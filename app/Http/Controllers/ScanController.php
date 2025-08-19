@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use App\Models\Scan;                           // <-- new (model from step 4.2)
 use ZBateson\MailMimeParser\MailMimeParser;
 use ZBateson\MailMimeParser\Message;
 use Carbon\Carbon;
@@ -10,7 +12,8 @@ use Carbon\Carbon;
 class ScanController extends Controller
 {
     /**
-     * Handle upload, parse in memory, and extract indicators + metadata.
+     * Handle upload, parse in memory, extract indicators + metadata,
+     * then persist a minimal Scan record (no email body stored).
      */
     public function store(Request $request)
     {
@@ -25,7 +28,7 @@ class ScanController extends Controller
             ]
         );
 
-        // 2) Read from PHP temp (no persistence)
+        // 2) Read from PHP temp (no persistence of the file itself)
         $tmpPath = $request->file('eml')->getRealPath();
         $raw     = file_get_contents($tmpPath);
 
@@ -73,7 +76,7 @@ class ScanController extends Controller
             $received[] = (string) $h->getValue();
         }
 
-        // 10) Build payload
+        // 10) Build payload for the UI (no body content)
         $results = [
             'from'        => $from,
             'fromDomain'  => $fromDomain,
@@ -97,9 +100,40 @@ class ScanController extends Controller
             ],
         ];
 
+        // 11) Persist minimal, privacy-friendly metadata in DB
+        //     (requires scans table + Scan model from step 4.2)
+        $scan = Scan::create([
+            'user_id'           => Auth::id(),
+            'from'              => $from,
+            'from_domain'       => $fromDomain,
+            'to'                => $to,
+            'subject'           => $subject,
+            'date_raw'          => $dateRaw,
+            'date_iso'          => $dateIso,
+            'text_length'       => $results['bodies']['textLength'] ?? 0,
+            'html_length'       => $results['bodies']['htmlLength'] ?? 0,
+            'raw_size'          => $results['bodies']['rawSize'] ?? 0,
+            'attachments_count' => $attachCount,
+            'urls_count'        => count($urls),
+            'urls_json'         => $urls,   // optional convenience; no bodies stored
+        ]);
+
         return back()
-            ->with('ok', 'File parsed in memory.')
-            ->with('results', $results);
+            ->with('ok', 'File parsed in memory and saved to history.')
+            ->with('results', $results)
+            ->with('scanId', $scan->id);
+    }
+
+    /**
+     * History page: list scans for the authenticated user (paginated).
+     */
+    public function history()
+    {
+        $scans = Scan::where('user_id', auth()->id())
+            ->latest()
+            ->paginate(10);
+
+        return view('history', compact('scans'));
     }
 
     /** Best-effort domain extraction from a From: header. */

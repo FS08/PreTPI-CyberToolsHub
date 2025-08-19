@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\ScanController; // <-- add controller import
+use App\Http\Controllers\ScanController; // controller for scan + history
 
 // ---------- Public pages ----------
 Route::view('/', 'home')->name('home');          // serves resources/views/home.blade.php
@@ -15,15 +15,17 @@ Route::view('/dashboard', 'dashboard')
 
 // ---------- Private pages (login + verified email required) ----------
 Route::middleware(['auth', 'verified'])->group(function () {
-    // GET: scan page (form)
-    Route::view('/scan', 'create')->name('scan.create');        // serves resources/views/create.blade.php
+    // Scan page (form)
+    Route::view('/scan', 'create')->name('scan.create'); // resources/views/create.blade.php
 
-    // POST: scan upload handler (controller, validation only — no parsing)
+    // Upload handler (validation + parse + persist)
     Route::post('/scan', [ScanController::class, 'store'])->name('scan.store');
 
-    // Other protected pages (placeholders)
-    Route::view('/history', 'history')->name('scan.history');   // resources/views/history.blade.php
-    Route::view('/stats', 'stats')->name('stats');              // resources/views/stats.blade.php
+    // History (now uses controller action to fetch paginated scans)
+    Route::get('/history', [ScanController::class, 'history'])->name('scan.history');
+
+    // Stats (placeholder view for now)
+    Route::view('/stats', 'stats')->name('stats'); // resources/views/stats.blade.php
 });
 
 // ---------- Breeze profile pages (login required) ----------
