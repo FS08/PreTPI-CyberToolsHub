@@ -18,11 +18,11 @@
           </label>
           <input type="file" name="eml" accept=".eml" required 
                  class="block w-full border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-300">
-          <p class="text-xs text-gray-500 mt-1">Max 15MB, MIME: message/rfc822</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Max 15MB, MIME: message/rfc822</p>
 
           {{-- Server-side validation error for the file input --}}
           @error('eml')
-            <p class="text-red-600 mt-1">{{ $message }}</p>
+            <p class="text-red-600 dark:text-red-400 mt-1">{{ $message }}</p>
           @enderror
         </div>
 
@@ -74,12 +74,33 @@
             </div>
           </dl>
         </div>
+
+        {{-- Extracted URLs --}}
+        @if (!empty($r['urls']))
+          <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <h3 class="font-semibold mb-2">Extracted URLs ({{ count($r['urls']) }})</h3>
+            <ul class="list-disc ms-5 space-y-1 text-sm">
+              @foreach ($r['urls'] as $u)
+                <li>
+                  <a href="{{ $u }}" target="_blank" rel="noopener noreferrer nofollow"
+                     class="text-blue-600 dark:text-blue-400 hover:underline">
+                    {{ $u }}
+                  </a>
+                </li>
+              @endforeach
+            </ul>
+          </div>
+        @else
+          <div class="rounded-lg border border-gray-200 p-4 text-sm text-gray-600 dark:text-gray-300 dark:border-gray-700">
+            No URLs detected.
+          </div>
+        @endif
       @endif
 
       {{-- Simple guidance --}}
       <p class="text-sm text-gray-600 dark:text-gray-300">
         This step validates, accepts, and parses the .eml file in memory. 
-        No email content is stored. Next, we will extract URLs.
+        No email content is stored. We also extract URLs (basic regex, normalized & deduped).
       </p>
     </div>
   </div>
