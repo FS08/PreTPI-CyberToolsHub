@@ -33,7 +33,15 @@
                     {{ optional($scan->created_at)->format('Y-m-d H:i') }}
                   </td>
                   <td class="px-6 py-4 break-all">{{ $scan->from ?? '—' }}</td>
-                  <td class="px-6 py-4 break-all">{{ $scan->subject ?? '—' }}</td>
+                  
+                  {{-- Make subject clickable --}}
+                  <td class="px-6 py-4 break-all">
+                    <a href="{{ route('scan.show', $scan->id) }}" 
+                       class="text-blue-600 dark:text-blue-400 hover:underline">
+                      {{ $scan->subject ?? '—' }}
+                    </a>
+                  </td>
+
                   <td class="px-6 py-4">{{ $scan->urls_count }}</td>
                   <td class="px-6 py-4">{{ $scan->attachments_count }}</td>
                   <td class="px-6 py-4">{{ number_format($scan->raw_size) }} bytes</td>

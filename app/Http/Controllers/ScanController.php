@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Models\Scan;                           // <-- new (model from step 4.2)
+use App\Models\Scan;
 use ZBateson\MailMimeParser\MailMimeParser;
 use ZBateson\MailMimeParser\Message;
 use Carbon\Carbon;
@@ -101,7 +101,6 @@ class ScanController extends Controller
         ];
 
         // 11) Persist minimal, privacy-friendly metadata in DB
-        //     (requires scans table + Scan model from step 4.2)
         $scan = Scan::create([
             'user_id'           => Auth::id(),
             'from'              => $from,
@@ -115,7 +114,7 @@ class ScanController extends Controller
             'raw_size'          => $results['bodies']['rawSize'] ?? 0,
             'attachments_count' => $attachCount,
             'urls_count'        => count($urls),
-            'urls_json'         => $urls,   // optional convenience; no bodies stored
+            'urls_json'         => $urls,
         ]);
 
         return back()
@@ -134,6 +133,41 @@ class ScanController extends Controller
             ->paginate(10);
 
         return view('history', compact('scans'));
+    }
+
+    /**
+     * Details page: show one scan (owner only).
+     */
+    public function show(Scan $scan)
+    {
+        // Ownership check
+        abort_if($scan->user_id !== auth()->id(), 403, 'Not authorized.');
+
+        // Build results array consistent with Scan summary
+        $results = [
+            'from'        => $scan->from,
+            'fromDomain'  => $scan->from_domain,
+            'to'          => $scan->to,
+            'subject'     => $scan->subject,
+            'dateRaw'     => $scan->date_raw,
+            'bodies'      => [
+                'textLength' => (int) $scan->text_length,
+                'htmlLength' => (int) $scan->html_length,
+                'rawSize'    => (int) $scan->raw_size,
+            ],
+            'attachments' => [
+                'count' => (int) $scan->attachments_count,
+            ],
+            'urls'        => $scan->urls_json ?? [],
+            'extra'       => [
+                'dateIso' => $scan->date_iso,
+            ],
+        ];
+
+        return view('scans.show', [
+            'scan'    => $scan,
+            'results' => $results,
+        ]);
     }
 
     /** Best-effort domain extraction from a From: header. */
