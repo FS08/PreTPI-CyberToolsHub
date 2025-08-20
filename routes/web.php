@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ScanController; // controller for scan + history + details
+use App\Http\Controllers\UrlscanController; // <-- new dev controller
 
 // ---------- Public pages ----------
 Route::view('/', 'home')->name('home');          // serves resources/views/home.blade.php
@@ -29,6 +30,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // Stats (placeholder view for now)
     Route::view('/stats', 'stats')->name('stats'); // resources/views/stats.blade.php
+
+    // ---------- Dev: temporary page for Urlscan.io testing ----------
+    Route::get('/dev/urlscan', [UrlscanController::class, 'index'])->name('dev.urlscan.index');
+    Route::get('/dev/urlscan/search', [UrlscanController::class, 'search'])->name('dev.urlscan.search');
+    Route::post('/dev/urlscan/submit', [UrlscanController::class, 'submit'])->name('dev.urlscan.submit');
 });
 
 // ---------- Breeze profile pages (login required) ----------
