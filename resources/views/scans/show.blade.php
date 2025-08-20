@@ -1,4 +1,4 @@
-{{-- resources/views/show.blade.php --}}
+{{-- resources/views/scans/show.blade.php --}}
 <x-app-layout>
   <x-slot name="header">
     <div class="flex justify-between items-center">
@@ -50,21 +50,28 @@
         </dl>
       </div>
 
-      {{-- Extracted URLs --}}
-      @php
-        $urls = is_array($scan->urls_json) ? $scan->urls_json : (json_decode($scan->urls_json ?? '[]', true) ?: []);
-      @endphp
-
-      @if (!empty($urls))
+      {{-- Extracted URLs + urlscan submission status --}}
+      @if ($scan->urls->count() > 0)
         <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-          <h3 class="font-semibold mb-2">Extracted URLs ({{ count($urls) }})</h3>
-          <ul class="list-disc ms-5 space-y-1 text-sm">
-            @foreach ($urls as $u)
-              <li>
-                <a href="{{ $u }}" target="_blank" rel="noopener noreferrer nofollow"
-                   class="text-blue-600 dark:text-blue-400 hover:underline break-all">
-                  {{ $u }}
-                </a>
+          <h3 class="font-semibold mb-2">Extracted URLs ({{ $scan->urls->count() }})</h3>
+          <ul class="space-y-2 text-sm">
+            @foreach ($scan->urls as $url)
+              <li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-gray-200 dark:border-gray-700 pb-2">
+                <div class="break-all">
+                  <a href="{{ $url->url }}" target="_blank" rel="noopener noreferrer nofollow"
+                     class="text-blue-600 dark:text-blue-400 hover:underline">
+                    {{ $url->url }}
+                  </a>
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">
+                  @if ($url->status === 'submitted' && $url->result_url)
+                    ✅ Submitted → <a href="{{ $url->result_url }}" target="_blank" class="underline">View</a>
+                  @elseif ($url->status === 'error')
+                    ❌ Error: {{ $url->error_message }}
+                  @else
+                    ⏳ {{ ucfirst($url->status) }}
+                  @endif
+                </div>
               </li>
             @endforeach
           </ul>
@@ -76,7 +83,8 @@
       @endif
 
       <div class="pt-2 text-sm text-gray-600 dark:text-gray-300">
-        This page shows saved scan metadata. The original email body is never stored for privacy reasons.
+        This page shows saved scan metadata and submission status.  
+        The original email body is never stored for privacy reasons.
       </div>
 
     </div>
