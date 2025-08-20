@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\ScanController; // controller for scan + history
+use App\Http\Controllers\ScanController; // controller for scan + history + details
 
 // ---------- Public pages ----------
 Route::view('/', 'home')->name('home');          // serves resources/views/home.blade.php
@@ -21,8 +21,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // Upload handler (validation + parse + persist)
     Route::post('/scan', [ScanController::class, 'store'])->name('scan.store');
 
-    // History (now uses controller action to fetch paginated scans)
+    // History list (controller for pagination)
     Route::get('/history', [ScanController::class, 'history'])->name('scan.history');
+
+    // NEW: Scan details page (owner-only)
+    Route::get('/history/{scan}', [ScanController::class, 'show'])->name('scan.show');
 
     // Stats (placeholder view for now)
     Route::view('/stats', 'stats')->name('stats'); // resources/views/stats.blade.php
