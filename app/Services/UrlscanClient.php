@@ -48,8 +48,10 @@ class UrlscanClient
      *   - string: 'public' | 'unlisted' | 'private'
      *   - bool:   true => 'public', false => 'unlisted' (back-compat with old dev form)
      *   - null:   falls back to config('urlscan.visibility')
+     *
+     * $wait controls whether we poll until finished (default: false).
      */
-    public function submit(string $url, $visibility = null, ?string $customAgent = null): array
+    public function submit(string $url, $visibility = null, ?string $customAgent = null, bool $wait = false): array
     {
         // Normalize visibility
         if (is_bool($visibility)) {
@@ -60,43 +62,55 @@ class UrlscanClient
 
         $payload = [
             'url'        => $url,
-            'visibility' => $visibility, // urlscan expects 'visibility'
+            'visibility' => $visibility,
         ];
 
         if ($customAgent) {
-            $payload['customagent'] = $customAgent; // optional
+            $payload['customagent'] = $customAgent;
         }
 
-        return $this->http()
+        $resp = $this->http()
             ->post("{$this->base}/v1/scan", $payload)
             ->throw()
             ->json();
+
+        // Default: return immediately (fast, avoids timeouts)
+        if ($wait === false || !config('urlscan.wait_result', false)) {
+            return $resp; // contains 'uuid' and 'result' URL
+        }
+
+        // Optional: block until result ready
+        return $this->waitForResult($resp['uuid'] ?? '');
     }
 
-    /** Poll until result is ready (or timeout) */
-    public function waitForResult(string $uuid, int $maxSeconds = 15, int $intervalSeconds = 2): ?array
+    /** Poll until result is ready (or timeout). */
+    private function waitForResult(string $uuid): ?array
     {
-        $deadline = time() + $maxSeconds;
+        if (empty($uuid)) {
+            return null;
+        }
+
+        $interval = (int) config('urlscan.poll_interval_seconds', 2);
+        $timeout  = (int) config('urlscan.poll_timeout_seconds', 20);
+        $deadline = time() + $timeout;
 
         while (time() < $deadline) {
             try {
                 $resp = $this->result($uuid);
-
-                // A finished scan will have a task + data section
                 if (!empty($resp['task']) && !empty($resp['data'])) {
                     return $resp;
                 }
             } catch (\Illuminate\Http\Client\RequestException $e) {
                 if ($e->response?->status() !== 404) {
-                    throw $e; // rethrow other errors
+                    throw $e; // rethrow non-404 errors
                 }
                 // 404 = still pending
             }
 
-            sleep($intervalSeconds);
+            sleep(max(1, $interval));
         }
 
-        return null; // timed out
+        return null; // timed out waiting
     }
 
     /** Fetch result by result ID/UUID. */

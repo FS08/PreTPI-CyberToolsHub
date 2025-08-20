@@ -3,9 +3,9 @@
   <x-slot name="header">
     <div class="flex justify-between items-center">
       <h2 class="font-semibold text-xl">Scan Details</h2>
-      <a href="{{ route('scan.history') }}" 
-         class="inline-flex items-center px-4 py-2 bg-gray-800 text-white text-sm font-medium 
-                rounded-lg shadow hover:bg-gray-900 focus:outline-none focus:ring-2 
+      <a href="{{ route('scan.history') }}"
+         class="inline-flex items-center px-4 py-2 bg-gray-800 text-white text-sm font-medium
+                rounded-lg shadow hover:bg-gray-900 focus:outline-none focus:ring-2
                 focus:ring-offset-2 focus:ring-gray-700 transition">
         ← Back to History
       </a>
@@ -55,21 +55,32 @@
         <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
           <h3 class="font-semibold mb-2">Extracted URLs ({{ $scan->urls->count() }})</h3>
           <ul class="space-y-2 text-sm">
-            @foreach ($scan->urls as $url)
+            @foreach ($scan->urls as $u)
               <li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-gray-200 dark:border-gray-700 pb-2">
                 <div class="break-all">
-                  <a href="{{ $url->url }}" target="_blank" rel="noopener noreferrer nofollow"
+                  <a href="{{ $u->url }}" target="_blank" rel="noopener noreferrer nofollow"
                      class="text-blue-600 dark:text-blue-400 hover:underline">
-                    {{ $url->url }}
+                    {{ $u->url }}
                   </a>
                 </div>
-                <div class="text-xs text-gray-600 dark:text-gray-300">
-                  @if ($url->status === 'submitted' && $url->result_url)
-                    ✅ Submitted → <a href="{{ $url->result_url }}" target="_blank" class="underline">View</a>
-                  @elseif ($url->status === 'error')
-                    ❌ Error: {{ $url->error_message }}
+
+                <div class="text-xs text-gray-700 dark:text-gray-300">
+                  @php
+                    $label = ucfirst($u->status ?? 'queued');
+                  @endphp
+
+                  @if (!empty($u->result_url))
+                    {{-- Show a View link whenever urlscan gave us a result URL --}}
+                    <span class="mr-1">✅ {{ $label }}</span>
+                    <a href="{{ $u->result_url }}" target="_blank" class="underline">View</a>
+                  @elseif ($u->status === 'error')
+                    ❌ Error: {{ $u->error_message }}
+                  @elseif ($u->status === 'blocked')
+                    🚫 Blocked
+                  @elseif ($u->status === 'rate_limited')
+                    ⏳ Rate limited — retry later
                   @else
-                    ⏳ {{ ucfirst($url->status) }}
+                    ⏳ {{ $label }}
                   @endif
                 </div>
               </li>
@@ -83,7 +94,7 @@
       @endif
 
       <div class="pt-2 text-sm text-gray-600 dark:text-gray-300">
-        This page shows saved scan metadata and submission status.  
+        This page shows saved scan metadata and submission status.
         The original email body is never stored for privacy reasons.
       </div>
 

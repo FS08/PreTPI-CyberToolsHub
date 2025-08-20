@@ -18,7 +18,7 @@ class ScanController extends Controller
     /**
      * Handle upload, parse in memory, extract indicators + metadata,
      * persist a minimal Scan record (no email body stored),
-     * and submit up to N URLs to urlscan.io (rate‑limited + short polling).
+     * and submit up to N URLs to urlscan.io (rate‑limited, non‑blocking).
      */
     public function store(Request $request)
     {
@@ -120,8 +120,8 @@ class ScanController extends Controller
             'urls_json'         => $urls,
         ]);
 
-        // 12) Submit URLs to urlscan.io (limited, rate‑limited) + short polling
-        $submitted = [];
+        // 12) Submit URLs to urlscan.io (limited, non‑blocking)
+        $submitted  = [];
         $enabled    = (bool) config('urlscan.enabled', true);
         $maxPerScan = (int)  config('urlscan.max_per_scan', 5);
         $sleepMs    = (int)  config('urlscan.rate_sleep_ms', 300);
@@ -140,38 +140,38 @@ class ScanController extends Controller
                 ]);
 
                 try {
-                    $resp = $this->urlscan->submit($u, $visibility);
-
-                    $uuid      = $resp['uuid']   ?? null;
-                    $resultUrl = $resp['result'] ?? null;
+                    // IMPORTANT: never wait here (avoid request timeouts)
+                    $resp = $this->urlscan->submit(
+                        url: $u,
+                        visibility: $visibility,
+                        customAgent: null,
+                        wait: false   // <-- non-blocking
+                    );
 
                     $row->update([
                         'status'       => 'submitted',
-                        'result_uuid'  => $uuid,
-                        'result_url'   => $resultUrl,
+                        'result_uuid'  => $resp['uuid']   ?? null,
+                        'result_url'   => $resp['result'] ?? null,
                         'error_message'=> null,
                     ]);
 
-                    // --- Short polling (wait up to ~15s) ---
-                    if ($uuid) {
-                        $final = $this->urlscan->waitForResult($uuid, maxSeconds: 15, intervalSeconds: 2);
-                        if ($final) {
-                            $row->update(['status' => 'finished']);
-                        }
-                    }
-
                     $submitted[] = [
                         'url'    => $u,
-                        'uuid'   => $uuid,
-                        'result' => $resultUrl,
-                        'status' => $row->status, // submitted | finished
+                        'uuid'   => $resp['uuid']   ?? null,
+                        'result' => $resp['result'] ?? null,
+                        'status' => 'submitted',
                     ];
                 } catch (\Throwable $e) {
                     $row->update([
                         'status'        => 'error',
                         'error_message' => $e->getMessage(),
                     ]);
-                    $submitted[] = ['url' => $u, 'status' => 'error', 'error' => $e->getMessage()];
+
+                    $submitted[] = [
+                        'url'    => $u,
+                        'status' => 'error',
+                        'error'  => $e->getMessage(),
+                    ];
                 }
 
                 if ($sleepMs > 0) {
@@ -181,7 +181,7 @@ class ScanController extends Controller
         }
 
         return back()
-            ->with('ok', 'File parsed, saved to history, and URLs submitted to urlscan (limited).')
+            ->with('ok', 'File parsed, saved to history, and URLs submitted to urlscan (non‑blocking).')
             ->with('results', $results)
             ->with('scanId', $scan->id)
             ->with('urlscanSubmitted', $submitted);
@@ -213,12 +213,11 @@ class ScanController extends Controller
             'extra'       => ['dateIso' => optional($scan->date_iso)->toIso8601String()],
         ];
 
-        $scan->load('urls'); // ensure hasMany ScanUrl
+        $scan->load('urls');
 
         return view('scans.show', ['scan' => $scan, 'results' => $results]);
     }
 
-    /** Helpers */
     private function extractDomainFromAddress(string $from): ?string
     {
         if (preg_match('/<([^>]+)>/', $from, $m)) {

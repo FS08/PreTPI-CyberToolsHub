@@ -57,4 +57,9 @@ return [
     'max_per_scan'   => env('URLSCAN_MAX_PER_SCAN', 5),
     'rate_sleep_ms'  => env('URLSCAN_RATE_SLEEP_MS', 300),  // 0.3s
 
+    // NEW: do we wait for a finished result synchronously? (not recommended for web requests)
+    'wait_result'           => env('URLSCAN_WAIT_RESULT', false),
+    'poll_interval_seconds' => env('URLSCAN_POLL_INTERVAL', 2),
+    'poll_timeout_seconds'  => env('URLSCAN_POLL_TIMEOUT', 20),
+
 ];
