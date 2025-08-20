@@ -56,7 +56,7 @@ class UrlscanController extends Controller
         try {
             $json = $this->client->submit(
                 url: $request->string('url'),
-                public: $request->has('public') ? 'on' : 'off'
+                visibility: $request->has('public') ? 'on' : 'off'
             );
         } catch (\Throwable $e) {
             $error = $e->getMessage();
