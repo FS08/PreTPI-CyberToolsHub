@@ -18,7 +18,7 @@ class ScanController extends Controller
     /**
      * Handle upload, parse in memory, extract indicators + metadata,
      * persist a minimal Scan record (no email body stored),
-     * and submit up to N URLs to urlscan.io (rate‑limited).
+     * and submit up to N URLs to urlscan.io (rate‑limited + short polling).
      */
     public function store(Request $request)
     {
@@ -120,7 +120,7 @@ class ScanController extends Controller
             'urls_json'         => $urls,
         ]);
 
-        // 12) Submit URLs to urlscan.io (limited, rate‑limited)
+        // 12) Submit URLs to urlscan.io (limited, rate‑limited) + short polling
         $submitted = [];
         $enabled    = (bool) config('urlscan.enabled', true);
         $maxPerScan = (int)  config('urlscan.max_per_scan', 5);
@@ -141,13 +141,31 @@ class ScanController extends Controller
 
                 try {
                     $resp = $this->urlscan->submit($u, $visibility);
+
+                    $uuid      = $resp['uuid']   ?? null;
+                    $resultUrl = $resp['result'] ?? null;
+
                     $row->update([
                         'status'       => 'submitted',
-                        'result_uuid'  => $resp['uuid']   ?? null,
-                        'result_url'   => $resp['result'] ?? null,
+                        'result_uuid'  => $uuid,
+                        'result_url'   => $resultUrl,
                         'error_message'=> null,
                     ]);
-                    $submitted[] = ['url' => $u, 'uuid' => $resp['uuid'] ?? null, 'result' => $resp['result'] ?? null, 'status' => 'submitted'];
+
+                    // --- Short polling (wait up to ~15s) ---
+                    if ($uuid) {
+                        $final = $this->urlscan->waitForResult($uuid, maxSeconds: 15, intervalSeconds: 2);
+                        if ($final) {
+                            $row->update(['status' => 'finished']);
+                        }
+                    }
+
+                    $submitted[] = [
+                        'url'    => $u,
+                        'uuid'   => $uuid,
+                        'result' => $resultUrl,
+                        'status' => $row->status, // submitted | finished
+                    ];
                 } catch (\Throwable $e) {
                     $row->update([
                         'status'        => 'error',
@@ -195,11 +213,12 @@ class ScanController extends Controller
             'extra'       => ['dateIso' => optional($scan->date_iso)->toIso8601String()],
         ];
 
-        $scan->load('urls'); // make sure Scan has hasMany ScanUrl
+        $scan->load('urls'); // ensure hasMany ScanUrl
 
         return view('scans.show', ['scan' => $scan, 'results' => $results]);
     }
 
+    /** Helpers */
     private function extractDomainFromAddress(string $from): ?string
     {
         if (preg_match('/<([^>]+)>/', $from, $m)) {

@@ -73,6 +73,32 @@ class UrlscanClient
             ->json();
     }
 
+    /** Poll until result is ready (or timeout) */
+    public function waitForResult(string $uuid, int $maxSeconds = 15, int $intervalSeconds = 2): ?array
+    {
+        $deadline = time() + $maxSeconds;
+
+        while (time() < $deadline) {
+            try {
+                $resp = $this->result($uuid);
+
+                // A finished scan will have a task + data section
+                if (!empty($resp['task']) && !empty($resp['data'])) {
+                    return $resp;
+                }
+            } catch (\Illuminate\Http\Client\RequestException $e) {
+                if ($e->response?->status() !== 404) {
+                    throw $e; // rethrow other errors
+                }
+                // 404 = still pending
+            }
+
+            sleep($intervalSeconds);
+        }
+
+        return null; // timed out
+    }
+
     /** Fetch result by result ID/UUID. */
     public function result(string $resultId): array
     {

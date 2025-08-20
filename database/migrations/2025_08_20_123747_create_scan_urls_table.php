@@ -16,9 +16,9 @@ return new class extends Migration
             $table->string('host')->nullable();
 
             // urlscan submission control/result
-            $table->string('visibility', 16)->default('unlisted'); // public|unlisted
-            $table->string('status', 20)->default('submitted');    // submitted|blocked|rate_limited|error
-            $table->string('urlscan_uuid', 64)->nullable();
+            $table->string('visibility', 16)->default('unlisted'); 
+            $table->string('status', 20)->default('queued'); // queued|submitted|finished|blocked|rate_limited|error
+            $table->string('result_uuid', 64)->nullable();   // renamed from urlscan_uuid
             $table->string('result_url')->nullable();
 
             // errors
@@ -26,6 +26,7 @@ return new class extends Migration
             $table->text('error_message')->nullable();
 
             $table->timestamp('submitted_at')->nullable();
+            $table->timestamp('finished_at')->nullable(); // new: when marked finished
             $table->timestamps();
         });
     }
