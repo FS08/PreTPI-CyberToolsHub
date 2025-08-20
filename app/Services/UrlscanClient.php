@@ -9,34 +9,30 @@ class UrlscanClient
 {
     private string $base;
     private ?string $key;
-    private bool $publicDefault;
+    private string $visibilityDefault;
 
     public function __construct()
     {
-        $this->base          = rtrim(config('urlscan.base', 'https://urlscan.io/api'), '/');
-        $this->key           = config('urlscan.key');
-        $this->publicDefault = (bool) config('urlscan.public', true);
+        $this->base              = rtrim(config('urlscan.base', 'https://urlscan.io/api'), '/');
+        $this->key               = config('urlscan.key');
+        $this->visibilityDefault = (string) config('urlscan.visibility', 'unlisted'); // public|unlisted|private
     }
 
     private function http(): PendingRequest
     {
         $req = Http::acceptJson()
-            ->timeout(15)
-            ->retry(2, 250);
+            ->timeout(20)
+            ->retry(2, 300);
 
+        $headers = ['Content-Type' => 'application/json'];
         if (!empty($this->key)) {
-            $req = $req->withHeaders([
-                'API-Key'      => $this->key,
-                'Content-Type' => 'application/json',
-            ]);
-        } else {
-            $req = $req->withHeaders(['Content-Type' => 'application/json']);
+            $headers['API-Key'] = $this->key;
         }
 
-        return $req;
+        return $req->withHeaders($headers);
     }
 
-    /** Quick search by URL/domain/ip */
+    /** Quick search by URL/domain/IP. */
     public function search(string $q, int $size = 10): array
     {
         return $this->http()
@@ -45,13 +41,26 @@ class UrlscanClient
             ->json();
     }
 
-    /** Submit a URL for scanning */
-    public function submit(string $url, ?string $public = 'on', ?string $customAgent = null)
+    /**
+     * Submit a URL for scanning.
+     *
+     * $visibility can be:
+     *   - string: 'public' | 'unlisted' | 'private'
+     *   - bool:   true => 'public', false => 'unlisted' (back-compat with old dev form)
+     *   - null:   falls back to config('urlscan.visibility')
+     */
+    public function submit(string $url, $visibility = null, ?string $customAgent = null): array
     {
+        // Normalize visibility
+        if (is_bool($visibility)) {
+            $visibility = $visibility ? 'public' : 'unlisted';
+        } elseif (!is_string($visibility) || $visibility === '') {
+            $visibility = $this->visibilityDefault;
+        }
+
         $payload = [
-            'url'    => $url,
-            // urlscan expects "public" as string: "on", "off", or "unlisted"
-            'public' => $public,
+            'url'        => $url,
+            'visibility' => $visibility, // urlscan expects 'visibility'
         ];
 
         if ($customAgent) {
@@ -64,7 +73,7 @@ class UrlscanClient
             ->json();
     }
 
-    /** Fetch result by result ID/UUID */
+    /** Fetch result by result ID/UUID. */
     public function result(string $resultId): array
     {
         return $this->http()

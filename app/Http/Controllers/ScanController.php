@@ -5,15 +5,20 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Scan;
+use App\Models\ScanUrl;
+use App\Services\UrlscanClient;
 use ZBateson\MailMimeParser\MailMimeParser;
 use ZBateson\MailMimeParser\Message;
 use Carbon\Carbon;
 
 class ScanController extends Controller
 {
+    public function __construct(private UrlscanClient $urlscan) {}
+
     /**
      * Handle upload, parse in memory, extract indicators + metadata,
-     * then persist a minimal Scan record (no email body stored).
+     * persist a minimal Scan record (no email body stored),
+     * and submit up to N URLs to urlscan.io (rate‑limited).
      */
     public function store(Request $request)
     {
@@ -28,7 +33,7 @@ class ScanController extends Controller
             ]
         );
 
-        // 2) Read from PHP temp (no persistence of the file itself)
+        // 2) Read from PHP temp (no file persistence)
         $tmpPath = $request->file('eml')->getRealPath();
         $raw     = file_get_contents($tmpPath);
 
@@ -49,7 +54,7 @@ class ScanController extends Controller
             if (!empty($dateRaw)) {
                 $dateIso = Carbon::parse($dateRaw)->toIso8601String();
             }
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
             $dateIso = null;
         }
 
@@ -57,13 +62,13 @@ class ScanController extends Controller
         $textBody = $message->getTextContent() ?? '';
         $htmlBody = $message->getHtmlContent() ?? '';
 
-        // 6) Attachments (count only here)
+        // 6) Attachments (count only)
         $attachCount = count(iterator_to_array($message->getAllAttachmentParts()));
 
-        // 7) Sender domain (best-effort)
+        // 7) Sender domain (best‑effort)
         $fromDomain = $this->extractDomainFromAddress($from);
 
-        // 8) URL extraction
+        // 8) URL extraction (normalized + deduped)
         $combined = $textBody . "\n" . strip_tags($htmlBody);
         $urls     = $this->extractUrls($combined);
 
@@ -76,7 +81,7 @@ class ScanController extends Controller
             $received[] = (string) $h->getValue();
         }
 
-        // 10) Build payload for the UI (no body content)
+        // 10) Build payload for UI (no body content)
         $results = [
             'from'        => $from,
             'fromDomain'  => $fromDomain,
@@ -88,9 +93,7 @@ class ScanController extends Controller
                 'htmlLength' => mb_strlen($htmlBody, 'UTF-8'),
                 'rawSize'    => strlen($raw),
             ],
-            'attachments' => [
-                'count' => $attachCount,
-            ],
+            'attachments' => ['count' => $attachCount],
             'urls'        => $urls,
             'extra'       => [
                 'messageId'   => $messageId,
@@ -100,7 +103,7 @@ class ScanController extends Controller
             ],
         ];
 
-        // 11) Persist minimal, privacy-friendly metadata in DB
+        // 11) Persist minimal, privacy‑friendly metadata
         $scan = Scan::create([
             'user_id'           => Auth::id(),
             'from'              => $from,
@@ -117,33 +120,65 @@ class ScanController extends Controller
             'urls_json'         => $urls,
         ]);
 
+        // 12) Submit URLs to urlscan.io (limited, rate‑limited)
+        $submitted = [];
+        $enabled    = (bool) config('urlscan.enabled', true);
+        $maxPerScan = (int)  config('urlscan.max_per_scan', 5);
+        $sleepMs    = (int)  config('urlscan.rate_sleep_ms', 300);
+        $visibility = (string) config('urlscan.visibility', 'unlisted'); // public|unlisted|private
+
+        if ($enabled && !empty($urls)) {
+            $batch = array_slice($urls, 0, max(0, $maxPerScan));
+
+            foreach ($batch as $u) {
+                $row = ScanUrl::create([
+                    'scan_id'    => $scan->id,
+                    'url'        => $u,
+                    'host'       => parse_url($u, PHP_URL_HOST) ?: null,
+                    'visibility' => $visibility,
+                    'status'     => 'queued',
+                ]);
+
+                try {
+                    $resp = $this->urlscan->submit($u, $visibility);
+                    $row->update([
+                        'status'       => 'submitted',
+                        'result_uuid'  => $resp['uuid']   ?? null,
+                        'result_url'   => $resp['result'] ?? null,
+                        'error_message'=> null,
+                    ]);
+                    $submitted[] = ['url' => $u, 'uuid' => $resp['uuid'] ?? null, 'result' => $resp['result'] ?? null, 'status' => 'submitted'];
+                } catch (\Throwable $e) {
+                    $row->update([
+                        'status'        => 'error',
+                        'error_message' => $e->getMessage(),
+                    ]);
+                    $submitted[] = ['url' => $u, 'status' => 'error', 'error' => $e->getMessage()];
+                }
+
+                if ($sleepMs > 0) {
+                    usleep($sleepMs * 1000);
+                }
+            }
+        }
+
         return back()
-            ->with('ok', 'File parsed in memory and saved to history.')
+            ->with('ok', 'File parsed, saved to history, and URLs submitted to urlscan (limited).')
             ->with('results', $results)
-            ->with('scanId', $scan->id);
+            ->with('scanId', $scan->id)
+            ->with('urlscanSubmitted', $submitted);
     }
 
-    /**
-     * History page: list scans for the authenticated user (paginated).
-     */
     public function history()
     {
-        $scans = Scan::where('user_id', auth()->id())
-            ->latest()
-            ->paginate(10);
-
+        $scans = Scan::where('user_id', auth()->id())->latest()->paginate(10);
         return view('history', compact('scans'));
     }
 
-    /**
-     * Details page: show one scan (owner only).
-     */
     public function show(Scan $scan)
     {
-        // Ownership check
         abort_if($scan->user_id !== auth()->id(), 403, 'Not authorized.');
 
-        // Build results array consistent with Scan summary
         $results = [
             'from'        => $scan->from,
             'fromDomain'  => $scan->from_domain,
@@ -155,22 +190,16 @@ class ScanController extends Controller
                 'htmlLength' => (int) $scan->html_length,
                 'rawSize'    => (int) $scan->raw_size,
             ],
-            'attachments' => [
-                'count' => (int) $scan->attachments_count,
-            ],
+            'attachments' => ['count' => (int) $scan->attachments_count],
             'urls'        => $scan->urls_json ?? [],
-            'extra'       => [
-                'dateIso' => $scan->date_iso,
-            ],
+            'extra'       => ['dateIso' => optional($scan->date_iso)->toIso8601String()],
         ];
 
-        return view('scans.show', [
-            'scan'    => $scan,
-            'results' => $results,
-        ]);
+        $scan->load('urls'); // make sure Scan has hasMany ScanUrl
+
+        return view('scans.show', ['scan' => $scan, 'results' => $results]);
     }
 
-    /** Best-effort domain extraction from a From: header. */
     private function extractDomainFromAddress(string $from): ?string
     {
         if (preg_match('/<([^>]+)>/', $from, $m)) {
@@ -184,7 +213,6 @@ class ScanController extends Controller
         return count($parts) === 2 ? strtolower($parts[1]) : null;
     }
 
-    /** Extract http/https URLs, normalize and dedupe. */
     private function extractUrls(string $text): array
     {
         $urls = [];
@@ -197,7 +225,6 @@ class ScanController extends Controller
         return array_values(array_unique($urls));
     }
 
-    /** Normalize URL (trim trailing punct, lower-case host, http/https only). */
     private function normalizeUrl(string $raw): ?string
     {
         $raw = rtrim($raw, ".,);]");
