@@ -15,15 +15,9 @@ class ScanController extends Controller
 {
     public function __construct(private UrlscanClient $urlscan) {}
 
-    /**
-     * Handle upload, parse in memory, extract indicators + metadata,
-     * persist a minimal Scan record (no email body stored),
-     * look up SPF for the sender domain, and submit up to N URLs to urlscan.io
-     * (rate‑limited, non‑blocking).
-     */
     public function store(Request $request)
     {
-        // 1) Validate: .eml, <= 15MB
+        // 1) Validate EML upload
         $request->validate(
             ['eml' => ['required', 'file', 'mimetypes:message/rfc822', 'max:15360']],
             [
@@ -34,7 +28,7 @@ class ScanController extends Controller
             ]
         );
 
-        // 2) Read from PHP temp (no file persistence)
+        // 2) Read (no file persistence)
         $tmpPath = $request->file('eml')->getRealPath();
         $raw     = file_get_contents($tmpPath);
 
@@ -43,16 +37,16 @@ class ScanController extends Controller
         /** @var Message $message */
         $message = $parser->parse($raw, false);
 
-        // 4) Basic headers
-        $from    = $message->getHeaderValue('from');
-        $to      = $message->getHeaderValue('to');
-        $subject = $message->getHeaderValue('subject');
-        $dateRaw = $message->getHeaderValue('date');
+        // 4) Basic headers (cast to string, trim; they can be null)
+        $from    = trim((string) $message->getHeaderValue('from'));
+        $to      = trim((string) $message->getHeaderValue('to'));
+        $subject = trim((string) $message->getHeaderValue('subject'));
+        $dateRaw = trim((string) $message->getHeaderValue('date'));
 
         // Normalize date → ISO-8601 (best effort)
         $dateIso = null;
         try {
-            if (!empty($dateRaw)) {
+            if ($dateRaw !== '') {
                 $dateIso = Carbon::parse($dateRaw)->toIso8601String();
             }
         } catch (\Throwable) {
@@ -76,26 +70,22 @@ class ScanController extends Controller
         // 9) Extra metadata
         $messageId   = $message->getHeaderValue('message-id') ?? null;
         $contentType = $message->getHeaderValue('content-type') ?? null;
-
-        $received = [];
+        $received    = [];
         foreach ($message->getAllHeadersByName('received') as $h) {
             $received[] = (string) $h->getValue();
         }
 
-        // 10) SPF lookup (best effort)
-        $spf = $fromDomain ? $this->lookupSpfForDomain($fromDomain) : [
-            'found' => false,
-            'records' => [],
-            'note' => 'No sender domain detected',
-        ];
+        // 10) SPF + DMARC lookup (best effort)
+        $spf   = $fromDomain ? $this->lookupSpfForDomain($fromDomain)   : ['found' => false, 'records' => [], 'note' => 'No sender domain'];
+        $dmarc = $fromDomain ? $this->lookupDmarcForDomain($fromDomain) : ['found' => false, 'records' => [], 'note' => 'No sender domain'];
 
-        // 11) Build payload for UI (no body content)
+        // 11) Build payload for UI
         $results = [
-            'from'        => $from,
-            'fromDomain'  => $fromDomain,
-            'to'          => $to,
-            'subject'     => $subject,
-            'dateRaw'     => $dateRaw,
+            'from'        => $from !== '' ? $from : '—',
+            'fromDomain'  => $fromDomain ?? '—',
+            'to'          => $to !== '' ? $to : '—',
+            'subject'     => $subject !== '' ? $subject : '—',
+            'dateRaw'     => $dateRaw !== '' ? $dateRaw : '—',
             'bodies'      => [
                 'textLength' => mb_strlen($textBody, 'UTF-8'),
                 'htmlLength' => mb_strlen($htmlBody, 'UTF-8'),
@@ -108,18 +98,19 @@ class ScanController extends Controller
                 'contentType' => $contentType,
                 'received'    => $received,
                 'dateIso'     => $dateIso,
-                'spf'         => $spf,   // <-- show SPF summary in the UI if you want
+                'spf'         => $spf,
+                'dmarc'       => $dmarc,
             ],
         ];
 
-        // 12) Persist minimal, privacy‑friendly metadata (+ SPF JSON)
+        // 12) Persist
         $scan = Scan::create([
             'user_id'           => Auth::id(),
-            'from'              => $from,
+            'from'              => $from !== '' ? $from : null,
             'from_domain'       => $fromDomain,
-            'to'                => $to,
-            'subject'           => $subject,
-            'date_raw'          => $dateRaw,
+            'to'                => $to !== '' ? $to : null,
+            'subject'           => $subject !== '' ? $subject : null,
+            'date_raw'          => $dateRaw !== '' ? $dateRaw : null,
             'date_iso'          => $dateIso,
             'text_length'       => $results['bodies']['textLength'] ?? 0,
             'html_length'       => $results['bodies']['htmlLength'] ?? 0,
@@ -127,15 +118,16 @@ class ScanController extends Controller
             'attachments_count' => $attachCount,
             'urls_count'        => count($urls),
             'urls_json'         => $urls,
-            'spf_json'          => $spf,   // <-- new
+            'spf_json'          => $spf,
+            'dmarc_json'        => $dmarc,
         ]);
 
-        // 13) Submit URLs to urlscan.io (limited, non‑blocking)
+        // 13) Submit URLs to urlscan.io (non‑blocking)
         $submitted  = [];
         $enabled    = (bool) config('urlscan.enabled', true);
         $maxPerScan = (int)  config('urlscan.max_per_scan', 5);
         $sleepMs    = (int)  config('urlscan.rate_sleep_ms', 300);
-        $visibility = (string) config('urlscan.visibility', 'unlisted'); // public|unlisted|private
+        $visibility = (string) config('urlscan.visibility', 'unlisted');
 
         if ($enabled && !empty($urls)) {
             $batch = array_slice($urls, 0, max(0, $maxPerScan));
@@ -150,7 +142,6 @@ class ScanController extends Controller
                 ]);
 
                 try {
-                    // DO NOT wait here (keep request fast)
                     $resp = $this->urlscan->submit($u, $visibility);
 
                     $row->update([
@@ -159,21 +150,18 @@ class ScanController extends Controller
                         'result_url'   => $resp['result'] ?? null,
                         'error_message'=> null,
                     ]);
+
                     $submitted[] = [
-                        'url'    => $u,
-                        'uuid'   => $resp['uuid']   ?? null,
-                        'result' => $resp['result'] ?? null,
-                        'status' => 'submitted',
+                        'url' => $u, 'uuid' => $resp['uuid'] ?? null, 'result' => $resp['result'] ?? null, 'status' => 'submitted',
                     ];
                 } catch (\Throwable $e) {
                     $row->update([
                         'status'        => 'error',
                         'error_message' => $e->getMessage(),
                     ]);
+
                     $submitted[] = [
-                        'url'    => $u,
-                        'status' => 'error',
-                        'error'  => $e->getMessage(),
+                        'url' => $u, 'status' => 'error', 'error' => $e->getMessage(),
                     ];
                 }
 
@@ -184,7 +172,7 @@ class ScanController extends Controller
         }
 
         return back()
-            ->with('ok', 'File parsed, saved to history, SPF checked, and URLs submitted to urlscan (non‑blocking).')
+            ->with('ok', 'File parsed, saved, SPF/DMARC checked, and URLs submitted (non‑blocking).')
             ->with('results', $results)
             ->with('scanId', $scan->id)
             ->with('urlscanSubmitted', $submitted);
@@ -201,11 +189,11 @@ class ScanController extends Controller
         abort_if($scan->user_id !== auth()->id(), 403, 'Not authorized.');
 
         $results = [
-            'from'        => $scan->from,
-            'fromDomain'  => $scan->from_domain,
-            'to'          => $scan->to,
-            'subject'     => $scan->subject,
-            'dateRaw'     => $scan->date_raw,
+            'from'        => $scan->from ?? '—',
+            'fromDomain'  => $scan->from_domain ?? '—',
+            'to'          => $scan->to ?? '—',
+            'subject'     => $scan->subject ?? '—',
+            'dateRaw'     => $scan->date_raw ?? '—',
             'bodies'      => [
                 'textLength' => (int) $scan->text_length,
                 'htmlLength' => (int) $scan->html_length,
@@ -215,7 +203,8 @@ class ScanController extends Controller
             'urls'        => $scan->urls_json ?? [],
             'extra'       => [
                 'dateIso' => optional($scan->date_iso)->toIso8601String(),
-                'spf'     => $scan->spf_json,   // available for display if you want
+                'spf'     => $scan->spf_json,
+                'dmarc'   => $scan->dmarc_json,
             ],
         ];
 
@@ -226,8 +215,11 @@ class ScanController extends Controller
 
     /* ------------------------ helpers ------------------------ */
 
-    private function extractDomainFromAddress(string $from): ?string
+    private function extractDomainFromAddress(?string $from): ?string
     {
+        if (!$from || trim($from) === '') return null;
+
+        // Name <email@domain>
         if (preg_match('/<([^>]+)>/', $from, $m)) {
             $email = $m[1];
         } elseif (preg_match('/[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})/i', $from, $m)) {
@@ -235,6 +227,7 @@ class ScanController extends Controller
         } else {
             return null;
         }
+
         $parts = explode('@', $email);
         return count($parts) === 2 ? strtolower($parts[1]) : null;
     }
@@ -268,23 +261,11 @@ class ScanController extends Controller
         return $scheme . '://' . $host . $path . $query . $frag;
     }
 
-    /**
-     * SPF lookup for a domain.
-     * Returns:
-     *  [
-     *    'found'   => bool,
-     *    'records' => [ 'v=spf1 include:_spf.example.com ~all', ... ],
-     *    'parsed'  => [
-     *        ['record' => 'v=spf1 ...', 'mechanisms' => [...], 'all' => '~all', 'redirect' => '...', ...],
-     *    ],
-     *    'error'   => string|null
-     *  ]
-     */
+    /** SPF lookup (existing) */
     private function lookupSpfForDomain(string $domain): array
     {
         $out = ['found' => false, 'records' => [], 'parsed' => [], 'error' => null];
 
-        // dns_get_record may be disabled in some hostings
         if (!function_exists('dns_get_record')) {
             $out['error'] = 'dns_get_record() not available on this PHP environment';
             return $out;
@@ -292,32 +273,85 @@ class ScanController extends Controller
 
         try {
             $txts = @dns_get_record($domain, DNS_TXT);
-            if (!$txts || !is_array($txts)) {
-                return $out;
-            }
+            if (!$txts || !is_array($txts)) return $out;
 
             $spfRecords = [];
             foreach ($txts as $row) {
                 $txt = $row['txt'] ?? '';
-                if (is_array($txt)) {
-                    $txt = implode('', $txt);
-                }
+                if (is_array($txt)) $txt = implode('', $txt);
                 $txt = trim($txt);
-                if (stripos($txt, 'v=spf1') === 0) {
-                    $spfRecords[] = $txt;
-                }
+                if (stripos($txt, 'v=spf1') === 0) $spfRecords[] = $txt;
             }
+            if (empty($spfRecords)) return $out;
 
-            if (empty($spfRecords)) {
-                return $out;
-            }
-
-            $out['found'] = true;
+            $out['found']   = true;
             $out['records'] = $spfRecords;
-
-            // parse each SPF record into mechanisms
             foreach ($spfRecords as $rec) {
                 $out['parsed'][] = $this->parseSpfRecord($rec);
+            }
+            return $out;
+        } catch (\Throwable $e) {
+            $out['error'] = $e->getMessage();
+            return $out;
+        }
+    }
+
+    private function parseSpfRecord(string $record): array
+    {
+        $rest = trim(preg_replace('/^v=spf1\s*/i', '', $record));
+        $parts = preg_split('/\s+/', $rest);
+        $mechanisms = [];
+        $all = null; $redirect = null; $exp = null;
+
+        foreach ($parts as $p) {
+            if ($p === '') continue;
+
+            if (preg_match('/^([~+\-?])?all$/i', $p, $m)) {
+                $all = $m[0]; $mechanisms[] = ['type' => 'all', 'raw' => $m[0]]; continue;
+            }
+            if (stripos($p, 'redirect=') === 0) { $redirect = substr($p, 9); $mechanisms[] = ['type' => 'redirect', 'value' => $redirect]; continue; }
+            if (stripos($p, 'exp=') === 0)      { $exp      = substr($p, 4);  $mechanisms[] = ['type' => 'exp', 'value' => $exp]; continue; }
+
+            if (preg_match('/^(ip4|ip6|include|exists|ptr):(.+)$/i', $p, $m)) { $mechanisms[] = ['type' => strtolower($m[1]), 'value' => $m[2]]; continue; }
+            if (in_array(strtolower($p), ['a','mx'], true)) { $mechanisms[] = ['type' => strtolower($p)]; continue; }
+
+            $mechanisms[] = ['type' => 'other', 'raw' => $p];
+        }
+
+        return ['record' => $record, 'mechanisms' => $mechanisms, 'all' => $all, 'redirect' => $redirect, 'exp' => $exp];
+    }
+
+    /** DMARC lookup (NEW) */
+    private function lookupDmarcForDomain(string $domain): array
+    {
+        $out = ['found' => false, 'domain' => $domain, 'records' => [], 'parsed' => [], 'error' => null];
+
+        if (!function_exists('dns_get_record')) {
+            $out['error'] = 'dns_get_record() not available on this PHP environment';
+            return $out;
+        }
+
+        $name = '_dmarc.' . $domain;
+
+        try {
+            $txts = @dns_get_record($name, DNS_TXT);
+            if (!$txts || !is_array($txts)) return $out;
+
+            $records = [];
+            foreach ($txts as $row) {
+                $txt = $row['txt'] ?? '';
+                if (is_array($txt)) $txt = implode('', $txt);
+                $txt = trim($txt);
+                if (stripos($txt, 'v=DMARC1') === 0) $records[] = $txt;
+            }
+
+            if (empty($records)) return $out;
+
+            $out['found']   = true;
+            $out['records'] = $records;
+
+            foreach ($records as $rec) {
+                $out['parsed'][] = $this->parseDmarcRecord($rec);
             }
 
             return $out;
@@ -327,63 +361,28 @@ class ScanController extends Controller
         }
     }
 
-    /**
-     * Very light SPF parser: splits mechanisms and captures common ones.
-     * Example: "v=spf1 ip4:203.0.113.0/24 include:_spf.example.com a mx ~all"
-     */
-    private function parseSpfRecord(string $record): array
+    private function parseDmarcRecord(string $record): array
     {
-        // remove the leading v=spf1
-        $rest = trim(preg_replace('/^v=spf1\s*/i', '', $record));
+        // Remove v=DMARC1;
+        $rest = trim(preg_replace('/^v\s*=\s*DMARC1\s*;?/i', '', $record));
 
-        $parts = preg_split('/\s+/', $rest);
-        $mechanisms = [];
-        $all = null;
-        $redirect = null;
-        $exp = null;
-
-        foreach ($parts as $p) {
-            if ($p === '') continue;
-
-            // "all" mechanism (often with qualifier: -all, ~all, ?all, +all)
-            if (preg_match('/^([~+\-?])?all$/i', $p, $m)) {
-                $all = $m[0];
-                $mechanisms[] = ['type' => 'all', 'raw' => $m[0]];
-                continue;
-            }
-
-            // redirect= / exp=
-            if (stripos($p, 'redirect=') === 0) {
-                $redirect = substr($p, 9);
-                $mechanisms[] = ['type' => 'redirect', 'value' => $redirect];
-                continue;
-            }
-            if (stripos($p, 'exp=') === 0) {
-                $exp = substr($p, 4);
-                $mechanisms[] = ['type' => 'exp', 'value' => $exp];
-                continue;
-            }
-
-            // ip4:, ip6:, include:, a, mx, ptr, exists:
-            if (preg_match('/^(ip4|ip6|include|exists|ptr):(.+)$/i', $p, $m)) {
-                $mechanisms[] = ['type' => strtolower($m[1]), 'value' => $m[2]];
-                continue;
-            }
-            if (in_array(strtolower($p), ['a', 'mx'], true)) {
-                $mechanisms[] = ['type' => strtolower($p)];
-                continue;
-            }
-
-            // anything else, keep raw
-            $mechanisms[] = ['type' => 'other', 'raw' => $p];
+        // Split k=v; pairs
+        $tags = [];
+        foreach (preg_split('/\s*;\s*/', $rest, -1, PREG_SPLIT_NO_EMPTY) as $kv) {
+            if (!str_contains($kv, '=')) continue;
+            [$k, $v] = array_map('trim', explode('=', $kv, 2));
+            $tags[strtolower($k)] = $v;
         }
 
-        return [
-            'record'     => $record,
-            'mechanisms' => $mechanisms,
-            'all'        => $all,
-            'redirect'   => $redirect,
-            'exp'        => $exp,
-        ];
+        $policy = strtolower($tags['p'] ?? 'none');            // none|quarantine|reject
+        $subPol = strtolower($tags['sp'] ?? $policy);
+        $rua    = $tags['rua'] ?? null;
+        $ruf    = $tags['ruf'] ?? null;
+        $pct    = isset($tags['pct']) ? (int) $tags['pct'] : 100;
+        $fo     = $tags['fo'] ?? null;
+        $adkim  = strtolower($tags['adkim'] ?? 'r');           // r|s
+        $aspf   = strtolower($tags['aspf']  ?? 'r');           // r|s
+
+        return compact('record','policy','subPol','rua','ruf','pct','fo','adkim','aspf');
     }
 }

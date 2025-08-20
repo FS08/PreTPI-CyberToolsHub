@@ -19,58 +19,101 @@
       <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
         <h3 class="font-semibold mb-2">Parsed summary</h3>
         <dl class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-          <div>
-            <dt class="text-gray-500 dark:text-gray-400">From</dt>
-            <dd>{{ $scan->from ?? '—' }}</dd>
-          </div>
-          <div>
-            <dt class="text-gray-500 dark:text-gray-400">From domain</dt>
-            <dd>{{ $scan->from_domain ?? '—' }}</dd>
-          </div>
-          <div>
-            <dt class="text-gray-500 dark:text-gray-400">To</dt>
-            <dd>{{ $scan->to ?? '—' }}</dd>
-          </div>
-          <div>
-            <dt class="text-gray-500 dark:text-gray-400">Subject</dt>
-            <dd>{{ $scan->subject ?? '—' }}</dd>
-          </div>
-          <div>
-            <dt class="text-gray-500 dark:text-gray-400">Date</dt>
-            <dd>{{ $scan->date_iso ?? $scan->date_raw ?? '—' }}</dd>
-          </div>
-          <div>
-            <dt class="text-gray-500 dark:text-gray-400">Attachments</dt>
-            <dd>{{ $scan->attachments_count ?? 0 }}</dd>
-          </div>
-          <div>
-            <dt class="text-gray-500 dark:text-gray-400">Raw size</dt>
-            <dd>{{ number_format($scan->raw_size) }} bytes</dd>
-          </div>
+          <div><dt class="text-gray-500 dark:text-gray-400">From</dt><dd>{{ $scan->from ?? '—' }}</dd></div>
+          <div><dt class="text-gray-500 dark:text-gray-400">From domain</dt><dd>{{ $scan->from_domain ?? '—' }}</dd></div>
+          <div><dt class="text-gray-500 dark:text-gray-400">To</dt><dd>{{ $scan->to ?? '—' }}</dd></div>
+          <div><dt class="text-gray-500 dark:text-gray-400">Subject</dt><dd>{{ $scan->subject ?? '—' }}</dd></div>
+          <div><dt class="text-gray-500 dark:text-gray-400">Date</dt><dd>{{ $scan->date_iso ?? $scan->date_raw ?? '—' }}</dd></div>
+          <div><dt class="text-gray-500 dark:text-gray-400">Attachments</dt><dd>{{ $scan->attachments_count ?? 0 }}</dd></div>
+          <div><dt class="text-gray-500 dark:text-gray-400">Raw size</dt><dd>{{ number_format($scan->raw_size) }} bytes</dd></div>
         </dl>
       </div>
 
-      {{-- SPF info --}}
+      {{-- Sender authentication (SPF + DMARC) --}}
       @php
-        $spf = is_array($scan->spf_json) ? $scan->spf_json : (json_decode($scan->spf_json ?? '[]', true) ?: []);
+        $spf = data_get($results, 'extra.spf') ?? ($scan->spf_json ?? null);
+        $spfBadge = ['class' => 'bg-gray-200 text-gray-800', 'text' => 'SPF: not checked', 'detail' => ''];
+
+        if (is_array($spf)) {
+          if (!empty($spf['error'])) {
+            $spfBadge = ['class'=>'bg-yellow-100 text-yellow-800','text'=>'SPF: lookup error','detail'=>$spf['error']];
+          } elseif (empty($spf['found'])) {
+            $spfBadge = ['class'=>'bg-red-100 text-red-800','text'=>'SPF: not found','detail'=>'No TXT record with v=spf1'];
+          } else {
+            $qual = null; $ptr = false;
+            foreach ((array) data_get($spf,'parsed',[]) as $p) {
+              $qual = $qual ?? (data_get($p,'all') ?: null);
+              foreach ((array) data_get($p,'mechanisms',[]) as $m) {
+                if (strtolower(data_get($m,'type',''))==='ptr') { $ptr=true; }
+              }
+            }
+            if ($qual === '-all') {
+              $spfBadge = ['class'=>'bg-green-100 text-green-800','text'=>'SPF: strict (-all)','detail'=>'Strong policy'];
+            } elseif (in_array($qual,['~all','?all'],true)) {
+              $spfBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>"SPF: soft ($qual)",'detail'=>'May allow spoofing'];
+            } elseif ($qual === '+all') {
+              $spfBadge = ['class'=>'bg-red-100 text-red-800','text'=>'SPF: +all (insecure)','detail'=>'Accepts any sender'];
+            } else {
+              $spfBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'SPF: found','detail'=>'No explicit all-qualifier'];
+            }
+            if ($ptr) $spfBadge['detail'] .= ($spfBadge['detail']?' · ':'').'Contains ptr (discouraged)';
+          }
+        }
+
+        $dmarc = data_get($results, 'extra.dmarc') ?? ($scan->dmarc_json ?? null);
+        $dmarcBadge = ['class'=>'bg-gray-200 text-gray-800','text'=>'DMARC: not checked','detail'=>''];
+
+        if (is_array($dmarc)) {
+          if (!empty($dmarc['error'])) {
+            $dmarcBadge = ['class'=>'bg-yellow-100 text-yellow-800','text'=>'DMARC: lookup error','detail'=>$dmarc['error']];
+          } elseif (empty($dmarc['found'])) {
+            $dmarcBadge = ['class'=>'bg-red-100 text-red-800','text'=>'DMARC: not found','detail'=>'No _dmarc TXT'];
+          } else {
+            $p = strtolower((string) data_get($dmarc,'policy.p',''));
+            if ($p==='reject') {
+              $dmarcBadge = ['class'=>'bg-green-100 text-green-800','text'=>'DMARC: p=reject','detail'=>'Strong enforcement'];
+            } elseif ($p==='quarantine') {
+              $dmarcBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>'DMARC: p=quarantine','detail'=>'Partial enforcement'];
+            } elseif ($p==='none') {
+              $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: p=none','detail'=>'Monitor only'];
+            } else {
+              $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: found','detail'=>'Policy: '.$p];
+            }
+          }
+        }
       @endphp
+
       <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-        <h3 class="font-semibold mb-2">SPF Verification</h3>
-        @if (!empty($spf['found']) && !empty($spf['records']))
-          <p class="text-sm mb-2 text-green-700 dark:text-green-400">✅ SPF record(s) found for {{ $scan->from_domain }}</p>
-          <ul class="list-disc ms-5 text-sm space-y-1">
-            @foreach ($spf['records'] as $rec)
-              <li class="break-all">{{ $rec }}</li>
-            @endforeach
-          </ul>
-        @elseif (!empty($spf['error']))
-          <p class="text-sm text-red-600 dark:text-red-400">⚠️ SPF lookup error: {{ $spf['error'] }}</p>
-        @else
-          <p class="text-sm text-gray-600 dark:text-gray-300">No SPF record found for {{ $scan->from_domain ?? 'domain' }}.</p>
-        @endif
+        <h3 class="font-semibold mb-3">Sender authentication</h3>
+        <div class="flex flex-col gap-3">
+          <div class="flex items-start gap-2">
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $spfBadge['class'] }}">
+              {{ $spfBadge['text'] }}
+            </span>
+            @if($spfBadge['detail'])<span class="text-xs text-gray-600 dark:text-gray-300">{{ $spfBadge['detail'] }}</span>@endif
+          </div>
+          <div class="flex items-start gap-2">
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $dmarcBadge['class'] }}">
+              {{ $dmarcBadge['text'] }}
+            </span>
+            @if($dmarcBadge['detail'])<span class="text-xs text-gray-600 dark:text-gray-300">{{ $dmarcBadge['detail'] }}</span>@endif
+          </div>
+          @if(is_array($spf) && !empty($spf['records']))
+            <div class="mt-2">
+              <details class="text-xs">
+                <summary class="cursor-pointer">Show SPF record(s)</summary>
+                <ul class="list-disc ms-5 mt-1 space-y-1">
+                  @foreach ($spf['records'] as $rec)
+                    <li class="break-all">{{ $rec }}</li>
+                  @endforeach
+                </ul>
+              </details>
+            </div>
+          @endif
+        </div>
       </div>
 
-      {{-- Extracted URLs + urlscan submission status --}}
+      {{-- Extracted URLs --}}
       @if ($scan->urls->count() > 0)
         <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
           <h3 class="font-semibold mb-2">Extracted URLs ({{ $scan->urls->count() }})</h3>
@@ -79,25 +122,18 @@
               <li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-gray-200 dark:border-gray-700 pb-2">
                 <div class="break-all">
                   <a href="{{ $u->url }}" target="_blank" rel="noopener noreferrer nofollow"
-                     class="text-blue-600 dark:text-blue-400 hover:underline">
-                    {{ $u->url }}
-                  </a>
+                     class="text-blue-600 dark:text-blue-400 hover:underline">{{ $u->url }}</a>
                 </div>
-
                 <div class="text-xs text-gray-700 dark:text-gray-300">
-                  @php
-                    $label = ucfirst($u->status ?? 'queued');
-                  @endphp
-
-                  @if (!empty($u->result_url))
-                    <span class="mr-1">✅ {{ $label }}</span>
-                    <a href="{{ $u->result_url }}" target="_blank" class="underline">View</a>
+                  @php $label = ucfirst($u->status ?? 'queued'); @endphp
+                  @if ($u->result_url)
+                    ✅ {{ $label }} → <a href="{{ $u->result_url }}" target="_blank" class="underline">View</a>
                   @elseif ($u->status === 'error')
                     ❌ Error: {{ $u->error_message }}
                   @elseif ($u->status === 'blocked')
                     🚫 Blocked
                   @elseif ($u->status === 'rate_limited')
-                    ⏳ Rate limited — retry later
+                    ⏳ Rate limited
                   @else
                     ⏳ {{ $label }}
                   @endif
@@ -107,13 +143,13 @@
           </ul>
         </div>
       @else
-        <div class="rounded-lg border border-gray-200 p-4 text-sm text-gray-600 dark:text-gray-300 dark:border-gray-700">
+        <div class="rounded-lg border border-gray-200 p-4 text-sm text-gray-600 dark:text-gray-300">
           No URLs detected.
         </div>
       @endif
 
       <div class="pt-2 text-sm text-gray-600 dark:text-gray-300">
-        This page shows saved scan metadata, SPF info, and submission status.  
+        This page shows saved scan metadata, SPF/DMARC info, and submission status.
         The original email body is never stored for privacy reasons.
       </div>
 
