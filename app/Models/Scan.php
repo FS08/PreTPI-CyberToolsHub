@@ -15,13 +15,15 @@ class Scan extends Model
         'text_length', 'html_length', 'raw_size',
         'attachments_count', 'urls_count',
         'urls_json',
-        'spf_json', // <-- NEW
+        'spf_json',          // from step 5.2 (SPF)
+        'dmarc_json',        // NEW (DMARC)
     ];
 
     protected $casts = [
-        'date_iso'  => 'datetime',
-        'urls_json' => 'array',
-        'spf_json'  => 'array',   // <-- NEW
+        'date_iso'   => 'datetime',
+        'urls_json'  => 'array',
+        'spf_json'   => 'array',
+        'dmarc_json' => 'array',
     ];
 
     public function user(): BelongsTo
@@ -29,9 +31,7 @@ class Scan extends Model
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * Related URL submissions (each extracted URL sent to urlscan.io).
-     */
+    /** Related URL submissions (each extracted URL sent to urlscan.io). */
     public function urls(): HasMany
     {
         return $this->hasMany(ScanUrl::class);
