@@ -50,6 +50,26 @@
         </dl>
       </div>
 
+      {{-- SPF info --}}
+      @php
+        $spf = is_array($scan->spf_json) ? $scan->spf_json : (json_decode($scan->spf_json ?? '[]', true) ?: []);
+      @endphp
+      <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+        <h3 class="font-semibold mb-2">SPF Verification</h3>
+        @if (!empty($spf['found']) && !empty($spf['records']))
+          <p class="text-sm mb-2 text-green-700 dark:text-green-400">✅ SPF record(s) found for {{ $scan->from_domain }}</p>
+          <ul class="list-disc ms-5 text-sm space-y-1">
+            @foreach ($spf['records'] as $rec)
+              <li class="break-all">{{ $rec }}</li>
+            @endforeach
+          </ul>
+        @elseif (!empty($spf['error']))
+          <p class="text-sm text-red-600 dark:text-red-400">⚠️ SPF lookup error: {{ $spf['error'] }}</p>
+        @else
+          <p class="text-sm text-gray-600 dark:text-gray-300">No SPF record found for {{ $scan->from_domain ?? 'domain' }}.</p>
+        @endif
+      </div>
+
       {{-- Extracted URLs + urlscan submission status --}}
       @if ($scan->urls->count() > 0)
         <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
@@ -70,7 +90,6 @@
                   @endphp
 
                   @if (!empty($u->result_url))
-                    {{-- Show a View link whenever urlscan gave us a result URL --}}
                     <span class="mr-1">✅ {{ $label }}</span>
                     <a href="{{ $u->result_url }}" target="_blank" class="underline">View</a>
                   @elseif ($u->status === 'error')
@@ -94,7 +113,7 @@
       @endif
 
       <div class="pt-2 text-sm text-gray-600 dark:text-gray-300">
-        This page shows saved scan metadata and submission status.
+        This page shows saved scan metadata, SPF info, and submission status.  
         The original email body is never stored for privacy reasons.
       </div>
 
