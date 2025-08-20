@@ -18,7 +18,8 @@ class ScanController extends Controller
     /**
      * Handle upload, parse in memory, extract indicators + metadata,
      * persist a minimal Scan record (no email body stored),
-     * and submit up to N URLs to urlscan.io (rate‑limited, non‑blocking).
+     * look up SPF for the sender domain, and submit up to N URLs to urlscan.io
+     * (rate‑limited, non‑blocking).
      */
     public function store(Request $request)
     {
@@ -81,7 +82,14 @@ class ScanController extends Controller
             $received[] = (string) $h->getValue();
         }
 
-        // 10) Build payload for UI (no body content)
+        // 10) SPF lookup (best effort)
+        $spf = $fromDomain ? $this->lookupSpfForDomain($fromDomain) : [
+            'found' => false,
+            'records' => [],
+            'note' => 'No sender domain detected',
+        ];
+
+        // 11) Build payload for UI (no body content)
         $results = [
             'from'        => $from,
             'fromDomain'  => $fromDomain,
@@ -100,10 +108,11 @@ class ScanController extends Controller
                 'contentType' => $contentType,
                 'received'    => $received,
                 'dateIso'     => $dateIso,
+                'spf'         => $spf,   // <-- show SPF summary in the UI if you want
             ],
         ];
 
-        // 11) Persist minimal, privacy‑friendly metadata
+        // 12) Persist minimal, privacy‑friendly metadata (+ SPF JSON)
         $scan = Scan::create([
             'user_id'           => Auth::id(),
             'from'              => $from,
@@ -118,9 +127,10 @@ class ScanController extends Controller
             'attachments_count' => $attachCount,
             'urls_count'        => count($urls),
             'urls_json'         => $urls,
+            'spf_json'          => $spf,   // <-- new
         ]);
 
-        // 12) Submit URLs to urlscan.io (limited, non‑blocking)
+        // 13) Submit URLs to urlscan.io (limited, non‑blocking)
         $submitted  = [];
         $enabled    = (bool) config('urlscan.enabled', true);
         $maxPerScan = (int)  config('urlscan.max_per_scan', 5);
@@ -140,13 +150,8 @@ class ScanController extends Controller
                 ]);
 
                 try {
-                    // IMPORTANT: never wait here (avoid request timeouts)
-                    $resp = $this->urlscan->submit(
-                        url: $u,
-                        visibility: $visibility,
-                        customAgent: null,
-                        wait: false   // <-- non-blocking
-                    );
+                    // DO NOT wait here (keep request fast)
+                    $resp = $this->urlscan->submit($u, $visibility);
 
                     $row->update([
                         'status'       => 'submitted',
@@ -154,7 +159,6 @@ class ScanController extends Controller
                         'result_url'   => $resp['result'] ?? null,
                         'error_message'=> null,
                     ]);
-
                     $submitted[] = [
                         'url'    => $u,
                         'uuid'   => $resp['uuid']   ?? null,
@@ -166,7 +170,6 @@ class ScanController extends Controller
                         'status'        => 'error',
                         'error_message' => $e->getMessage(),
                     ]);
-
                     $submitted[] = [
                         'url'    => $u,
                         'status' => 'error',
@@ -181,7 +184,7 @@ class ScanController extends Controller
         }
 
         return back()
-            ->with('ok', 'File parsed, saved to history, and URLs submitted to urlscan (non‑blocking).')
+            ->with('ok', 'File parsed, saved to history, SPF checked, and URLs submitted to urlscan (non‑blocking).')
             ->with('results', $results)
             ->with('scanId', $scan->id)
             ->with('urlscanSubmitted', $submitted);
@@ -210,13 +213,18 @@ class ScanController extends Controller
             ],
             'attachments' => ['count' => (int) $scan->attachments_count],
             'urls'        => $scan->urls_json ?? [],
-            'extra'       => ['dateIso' => optional($scan->date_iso)->toIso8601String()],
+            'extra'       => [
+                'dateIso' => optional($scan->date_iso)->toIso8601String(),
+                'spf'     => $scan->spf_json,   // available for display if you want
+            ],
         ];
 
         $scan->load('urls');
 
         return view('scans.show', ['scan' => $scan, 'results' => $results]);
     }
+
+    /* ------------------------ helpers ------------------------ */
 
     private function extractDomainFromAddress(string $from): ?string
     {
@@ -258,5 +266,124 @@ class ScanController extends Controller
         $frag  = isset($parts['fragment']) ? ('#' . $parts['fragment']) : '';
 
         return $scheme . '://' . $host . $path . $query . $frag;
+    }
+
+    /**
+     * SPF lookup for a domain.
+     * Returns:
+     *  [
+     *    'found'   => bool,
+     *    'records' => [ 'v=spf1 include:_spf.example.com ~all', ... ],
+     *    'parsed'  => [
+     *        ['record' => 'v=spf1 ...', 'mechanisms' => [...], 'all' => '~all', 'redirect' => '...', ...],
+     *    ],
+     *    'error'   => string|null
+     *  ]
+     */
+    private function lookupSpfForDomain(string $domain): array
+    {
+        $out = ['found' => false, 'records' => [], 'parsed' => [], 'error' => null];
+
+        // dns_get_record may be disabled in some hostings
+        if (!function_exists('dns_get_record')) {
+            $out['error'] = 'dns_get_record() not available on this PHP environment';
+            return $out;
+        }
+
+        try {
+            $txts = @dns_get_record($domain, DNS_TXT);
+            if (!$txts || !is_array($txts)) {
+                return $out;
+            }
+
+            $spfRecords = [];
+            foreach ($txts as $row) {
+                $txt = $row['txt'] ?? '';
+                if (is_array($txt)) {
+                    $txt = implode('', $txt);
+                }
+                $txt = trim($txt);
+                if (stripos($txt, 'v=spf1') === 0) {
+                    $spfRecords[] = $txt;
+                }
+            }
+
+            if (empty($spfRecords)) {
+                return $out;
+            }
+
+            $out['found'] = true;
+            $out['records'] = $spfRecords;
+
+            // parse each SPF record into mechanisms
+            foreach ($spfRecords as $rec) {
+                $out['parsed'][] = $this->parseSpfRecord($rec);
+            }
+
+            return $out;
+        } catch (\Throwable $e) {
+            $out['error'] = $e->getMessage();
+            return $out;
+        }
+    }
+
+    /**
+     * Very light SPF parser: splits mechanisms and captures common ones.
+     * Example: "v=spf1 ip4:203.0.113.0/24 include:_spf.example.com a mx ~all"
+     */
+    private function parseSpfRecord(string $record): array
+    {
+        // remove the leading v=spf1
+        $rest = trim(preg_replace('/^v=spf1\s*/i', '', $record));
+
+        $parts = preg_split('/\s+/', $rest);
+        $mechanisms = [];
+        $all = null;
+        $redirect = null;
+        $exp = null;
+
+        foreach ($parts as $p) {
+            if ($p === '') continue;
+
+            // "all" mechanism (often with qualifier: -all, ~all, ?all, +all)
+            if (preg_match('/^([~+\-?])?all$/i', $p, $m)) {
+                $all = $m[0];
+                $mechanisms[] = ['type' => 'all', 'raw' => $m[0]];
+                continue;
+            }
+
+            // redirect= / exp=
+            if (stripos($p, 'redirect=') === 0) {
+                $redirect = substr($p, 9);
+                $mechanisms[] = ['type' => 'redirect', 'value' => $redirect];
+                continue;
+            }
+            if (stripos($p, 'exp=') === 0) {
+                $exp = substr($p, 4);
+                $mechanisms[] = ['type' => 'exp', 'value' => $exp];
+                continue;
+            }
+
+            // ip4:, ip6:, include:, a, mx, ptr, exists:
+            if (preg_match('/^(ip4|ip6|include|exists|ptr):(.+)$/i', $p, $m)) {
+                $mechanisms[] = ['type' => strtolower($m[1]), 'value' => $m[2]];
+                continue;
+            }
+            if (in_array(strtolower($p), ['a', 'mx'], true)) {
+                $mechanisms[] = ['type' => strtolower($p)];
+                continue;
+            }
+
+            // anything else, keep raw
+            $mechanisms[] = ['type' => 'other', 'raw' => $p];
+        }
+
+        return [
+            'record'     => $record,
+            'mechanisms' => $mechanisms,
+            'all'        => $all,
+            'redirect'   => $redirect,
+            'exp'        => $exp,
+        ];
     }
 }

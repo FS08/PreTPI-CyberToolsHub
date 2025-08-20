@@ -15,11 +15,13 @@ class Scan extends Model
         'text_length', 'html_length', 'raw_size',
         'attachments_count', 'urls_count',
         'urls_json',
+        'spf_json', // <-- NEW
     ];
 
     protected $casts = [
         'date_iso'  => 'datetime',
         'urls_json' => 'array',
+        'spf_json'  => 'array',   // <-- NEW
     ];
 
     public function user(): BelongsTo
