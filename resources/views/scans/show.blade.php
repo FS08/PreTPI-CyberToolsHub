@@ -32,8 +32,10 @@
       {{-- Sender authentication (SPF + DMARC) --}}
       @php
         $spf = data_get($results, 'extra.spf') ?? ($scan->spf_json ?? null);
-        $spfBadge = ['class' => 'bg-gray-200 text-gray-800', 'text' => 'SPF: not checked', 'detail' => ''];
+        $dmarc = data_get($results, 'extra.dmarc') ?? ($scan->dmarc_json ?? null);
 
+        // SPF badge
+        $spfBadge = ['class'=>'bg-gray-200 text-gray-800','text'=>'SPF: not checked','detail'=>''];
         if (is_array($spf)) {
           if (!empty($spf['error'])) {
             $spfBadge = ['class'=>'bg-yellow-100 text-yellow-800','text'=>'SPF: lookup error','detail'=>$spf['error']];
@@ -44,74 +46,101 @@
             foreach ((array) data_get($spf,'parsed',[]) as $p) {
               $qual = $qual ?? (data_get($p,'all') ?: null);
               foreach ((array) data_get($p,'mechanisms',[]) as $m) {
-                if (strtolower(data_get($m,'type',''))==='ptr') { $ptr=true; }
+                if (strtolower(data_get($m,'type',''))==='ptr') $ptr=true;
               }
             }
-            if ($qual === '-all') {
-              $spfBadge = ['class'=>'bg-green-100 text-green-800','text'=>'SPF: strict (-all)','detail'=>'Strong policy'];
-            } elseif (in_array($qual,['~all','?all'],true)) {
-              $spfBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>"SPF: soft ($qual)",'detail'=>'May allow spoofing'];
-            } elseif ($qual === '+all') {
-              $spfBadge = ['class'=>'bg-red-100 text-red-800','text'=>'SPF: +all (insecure)','detail'=>'Accepts any sender'];
-            } else {
-              $spfBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'SPF: found','detail'=>'No explicit all-qualifier'];
-            }
+            if ($qual==='-all')      $spfBadge = ['class'=>'bg-green-100 text-green-800','text'=>'SPF: strict (-all)','detail'=>'Strong policy'];
+            elseif (in_array($qual,['~all','?all'])) $spfBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>"SPF: soft ($qual)",'detail'=>'May allow spoofing'];
+            elseif ($qual==='+all')  $spfBadge = ['class'=>'bg-red-100 text-red-800','text'=>'SPF: +all (insecure)','detail'=>'Accepts any sender'];
+            else                     $spfBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'SPF: found','detail'=>'No explicit all-qualifier'];
             if ($ptr) $spfBadge['detail'] .= ($spfBadge['detail']?' · ':'').'Contains ptr (discouraged)';
           }
         }
 
-        $dmarc = data_get($results, 'extra.dmarc') ?? ($scan->dmarc_json ?? null);
+        // DMARC badge
         $dmarcBadge = ['class'=>'bg-gray-200 text-gray-800','text'=>'DMARC: not checked','detail'=>''];
-
         if (is_array($dmarc)) {
           if (!empty($dmarc['error'])) {
             $dmarcBadge = ['class'=>'bg-yellow-100 text-yellow-800','text'=>'DMARC: lookup error','detail'=>$dmarc['error']];
           } elseif (empty($dmarc['found'])) {
             $dmarcBadge = ['class'=>'bg-red-100 text-red-800','text'=>'DMARC: not found','detail'=>'No _dmarc TXT'];
           } else {
-            $p = strtolower((string) data_get($dmarc,'policy.p',''));
-            if ($p==='reject') {
-              $dmarcBadge = ['class'=>'bg-green-100 text-green-800','text'=>'DMARC: p=reject','detail'=>'Strong enforcement'];
-            } elseif ($p==='quarantine') {
-              $dmarcBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>'DMARC: p=quarantine','detail'=>'Partial enforcement'];
-            } elseif ($p==='none') {
-              $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: p=none','detail'=>'Monitor only'];
-            } else {
-              $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: found','detail'=>'Policy: '.$p];
-            }
+            $p = strtolower((string) data_get($dmarc,'parsed.0.policy',''));
+            if ($p==='reject')      $dmarcBadge = ['class'=>'bg-green-100 text-green-800','text'=>'DMARC: p=reject','detail'=>'Strong enforcement'];
+            elseif ($p==='quarantine') $dmarcBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>'DMARC: p=quarantine','detail'=>'Partial enforcement'];
+            elseif ($p==='none')    $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: p=none','detail'=>'Monitor only'];
+            else                    $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: found','detail'=>'Policy: '.$p];
           }
         }
+
+        // Heuristics
+        $heuristics = data_get($results,'extra.heuristics') ?? ($scan->heuristics_json ?? null);
       @endphp
 
       <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
         <h3 class="font-semibold mb-3">Sender authentication</h3>
         <div class="flex flex-col gap-3">
+          {{-- SPF --}}
           <div class="flex items-start gap-2">
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $spfBadge['class'] }}">
               {{ $spfBadge['text'] }}
             </span>
             @if($spfBadge['detail'])<span class="text-xs text-gray-600 dark:text-gray-300">{{ $spfBadge['detail'] }}</span>@endif
           </div>
+          {{-- DMARC --}}
           <div class="flex items-start gap-2">
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $dmarcBadge['class'] }}">
               {{ $dmarcBadge['text'] }}
             </span>
             @if($dmarcBadge['detail'])<span class="text-xs text-gray-600 dark:text-gray-300">{{ $dmarcBadge['detail'] }}</span>@endif
           </div>
-          @if(is_array($spf) && !empty($spf['records']))
-            <div class="mt-2">
-              <details class="text-xs">
-                <summary class="cursor-pointer">Show SPF record(s)</summary>
-                <ul class="list-disc ms-5 mt-1 space-y-1">
-                  @foreach ($spf['records'] as $rec)
-                    <li class="break-all">{{ $rec }}</li>
-                  @endforeach
-                </ul>
-              </details>
-            </div>
-          @endif
         </div>
       </div>
+
+      {{-- Heuristics (5.4) --}}
+      @if(is_array($heuristics))
+        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+          <h3 class="font-semibold mb-3">Heuristic analysis</h3>
+          <div class="mb-2">
+            @php
+              $score = (int) data_get($heuristics,'score',0);
+              $scoreClass = $score >= 50 ? 'bg-red-100 text-red-800' : ($score >= 20 ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800');
+            @endphp
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $scoreClass }}">
+              Score: {{ $score }}
+            </span>
+          </div>
+          <ul class="space-y-2 text-sm">
+            @forelse(data_get($heuristics,'findings',[]) as $f)
+              <li class="border-b pb-2 border-gray-200 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                  @php
+                    $sev = strtolower($f['severity'] ?? 'info');
+                    $sevClass = match($sev) {
+                      'high'   => 'bg-red-100 text-red-800',
+                      'medium' => 'bg-amber-100 text-amber-800',
+                      'low'    => 'bg-blue-100 text-blue-800',
+                      default  => 'bg-gray-200 text-gray-800'
+                    };
+                  @endphp
+                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium {{ $sevClass }}">
+                    {{ ucfirst($sev) }}
+                  </span>
+                  <span>{{ $f['message'] ?? '' }}</span>
+                </div>
+                @if(!empty($f['evidence']))
+                  <details class="ml-6 mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    <summary class="cursor-pointer">Evidence</summary>
+                    <pre class="whitespace-pre-wrap break-all">{{ json_encode($f['evidence'], JSON_PRETTY_PRINT) }}</pre>
+                  </details>
+                @endif
+              </li>
+            @empty
+              <li class="text-sm text-gray-500">No heuristic findings.</li>
+            @endforelse
+          </ul>
+        </div>
+      @endif
 
       {{-- Extracted URLs --}}
       @if ($scan->urls->count() > 0)
@@ -149,7 +178,7 @@
       @endif
 
       <div class="pt-2 text-sm text-gray-600 dark:text-gray-300">
-        This page shows saved scan metadata, SPF/DMARC info, and submission status.
+        This page shows saved scan metadata, SPF/DMARC info, heuristic checks, and URLscan submissions.
         The original email body is never stored for privacy reasons.
       </div>
 

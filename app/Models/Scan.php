@@ -17,6 +17,8 @@ class Scan extends Model
         'urls_json',
         'spf_json',          // from step 5.2 (SPF)
         'dmarc_json',        // NEW (DMARC)
+        'heuristics_json',   // NEW (heuristics)
+        'risk_score',        // NEW (risk score)
     ];
 
     protected $casts = [
@@ -24,6 +26,7 @@ class Scan extends Model
         'urls_json'  => 'array',
         'spf_json'   => 'array',
         'dmarc_json' => 'array',
+        'heuristics_json' => 'array', // NEW: heuristics JSON
     ];
 
     public function user(): BelongsTo
