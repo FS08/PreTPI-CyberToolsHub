@@ -31,7 +31,7 @@
 
       {{-- Sender authentication (SPF + DMARC) --}}
       @php
-        $spf = data_get($results, 'extra.spf') ?? ($scan->spf_json ?? null);
+        $spf   = data_get($results, 'extra.spf')   ?? ($scan->spf_json   ?? null);
         $dmarc = data_get($results, 'extra.dmarc') ?? ($scan->dmarc_json ?? null);
 
         // SPF badge
@@ -46,14 +46,21 @@
             foreach ((array) data_get($spf,'parsed',[]) as $p) {
               $qual = $qual ?? (data_get($p,'all') ?: null);
               foreach ((array) data_get($p,'mechanisms',[]) as $m) {
-                if (strtolower(data_get($m,'type',''))==='ptr') $ptr=true;
+                if (strtolower(data_get($m,'type',''))==='ptr') $ptr = true;
               }
             }
-            if ($qual==='-all')      $spfBadge = ['class'=>'bg-green-100 text-green-800','text'=>'SPF: strict (-all)','detail'=>'Strong policy'];
-            elseif (in_array($qual,['~all','?all'])) $spfBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>"SPF: soft ($qual)",'detail'=>'May allow spoofing'];
-            elseif ($qual==='+all')  $spfBadge = ['class'=>'bg-red-100 text-red-800','text'=>'SPF: +all (insecure)','detail'=>'Accepts any sender'];
-            else                     $spfBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'SPF: found','detail'=>'No explicit all-qualifier'];
-            if ($ptr) $spfBadge['detail'] .= ($spfBadge['detail']?' · ':'').'Contains ptr (discouraged)';
+            if ($qual === '-all') {
+              $spfBadge = ['class'=>'bg-green-100 text-green-800','text'=>'SPF: strict (-all)','detail'=>'Strong policy'];
+            } elseif (in_array($qual,['~all','?all'], true)) {
+              $spfBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>"SPF: soft ($qual)",'detail'=>'May allow spoofing'];
+            } elseif ($qual === '+all') {
+              $spfBadge = ['class'=>'bg-red-100 text-red-800','text'=>'SPF: +all (insecure)','detail'=>'Accepts any sender'];
+            } else {
+              $spfBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'SPF: found','detail'=>'No explicit all-qualifier'];
+            }
+            if ($ptr) {
+              $spfBadge['detail'] .= ($spfBadge['detail'] ? ' · ' : '') . 'Contains ptr (discouraged)';
+            }
           }
         }
 
@@ -66,10 +73,15 @@
             $dmarcBadge = ['class'=>'bg-red-100 text-red-800','text'=>'DMARC: not found','detail'=>'No _dmarc TXT'];
           } else {
             $p = strtolower((string) data_get($dmarc,'parsed.0.policy',''));
-            if ($p==='reject')      $dmarcBadge = ['class'=>'bg-green-100 text-green-800','text'=>'DMARC: p=reject','detail'=>'Strong enforcement'];
-            elseif ($p==='quarantine') $dmarcBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>'DMARC: p=quarantine','detail'=>'Partial enforcement'];
-            elseif ($p==='none')    $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: p=none','detail'=>'Monitor only'];
-            else                    $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: found','detail'=>'Policy: '.$p];
+            if ($p === 'reject') {
+              $dmarcBadge = ['class'=>'bg-green-100 text-green-800','text'=>'DMARC: p=reject','detail'=>'Strong enforcement'];
+            } elseif ($p === 'quarantine') {
+              $dmarcBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>'DMARC: p=quarantine','detail'=>'Partial enforcement'];
+            } elseif ($p === 'none') {
+              $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: p=none','detail'=>'Monitor only'];
+            } else {
+              $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: found','detail'=>'Policy: '.$p];
+            }
           }
         }
 
@@ -85,26 +97,32 @@
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $spfBadge['class'] }}">
               {{ $spfBadge['text'] }}
             </span>
-            @if($spfBadge['detail'])<span class="text-xs text-gray-600 dark:text-gray-300">{{ $spfBadge['detail'] }}</span>@endif
+            @if($spfBadge['detail'])
+              <span class="text-xs text-gray-600 dark:text-gray-300">{{ $spfBadge['detail'] }}</span>
+            @endif
           </div>
           {{-- DMARC --}}
           <div class="flex items-start gap-2">
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $dmarcBadge['class'] }}">
               {{ $dmarcBadge['text'] }}
             </span>
-            @if($dmarcBadge['detail'])<span class="text-xs text-gray-600 dark:text-gray-300">{{ $dmarcBadge['detail'] }}</span>@endif
+            @if($dmarcBadge['detail'])
+              <span class="text-xs text-gray-600 dark:text-gray-300">{{ $dmarcBadge['detail'] }}</span>
+            @endif
           </div>
         </div>
       </div>
 
-      {{-- Heuristics (5.4) --}}
+      {{-- Heuristics (6.x) --}}
       @if(is_array($heuristics))
         <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
           <h3 class="font-semibold mb-3">Heuristic analysis</h3>
           <div class="mb-2">
             @php
               $score = (int) data_get($heuristics,'score',0);
-              $scoreClass = $score >= 50 ? 'bg-red-100 text-red-800' : ($score >= 20 ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800');
+              $scoreClass = $score >= 50 ? 'bg-red-100 text-red-800'
+                           : ($score >= 20 ? 'bg-amber-100 text-amber-800'
+                           : 'bg-green-100 text-green-800');
             @endphp
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $scoreClass }}">
               Score: {{ $score }}
