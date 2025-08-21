@@ -114,51 +114,62 @@
       </div>
 
       {{-- Heuristics (6.x) --}}
-      @if(is_array($heuristics))
+        @if(is_array($heuristics))
         <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-          <h3 class="font-semibold mb-3">Heuristic analysis</h3>
-          <div class="mb-2">
+            <h3 class="font-semibold mb-3">Heuristic analysis</h3>
+            <div class="mb-3 flex items-center gap-3">
             @php
-              $score = (int) data_get($heuristics,'score',0);
-              $scoreClass = $score >= 50 ? 'bg-red-100 text-red-800'
-                           : ($score >= 20 ? 'bg-amber-100 text-amber-800'
-                           : 'bg-green-100 text-green-800');
+                $score = (int) data_get($heuristics,'score',0);
+                $scoreClass = $score >= 50 ? 'bg-red-100 text-red-800'
+                            : ($score >= 20 ? 'bg-amber-100 text-amber-800'
+                            : 'bg-green-100 text-green-800');
+
+                $riskLabel = $score >= 50 ? 'High Risk'
+                        : ($score >= 20 ? 'Medium Risk'
+                        : 'Low Risk');
+                $riskClass = $score >= 50 ? 'bg-red-600 text-white'
+                        : ($score >= 20 ? 'bg-amber-600 text-white'
+                        : 'bg-green-600 text-white');
             @endphp
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $scoreClass }}">
-              Score: {{ $score }}
+                Score: {{ $score }}
             </span>
-          </div>
-          <ul class="space-y-2 text-sm">
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $riskClass }}">
+                {{ $riskLabel }}
+            </span>
+            </div>
+
+            <ul class="space-y-2 text-sm">
             @forelse(data_get($heuristics,'findings',[]) as $f)
-              <li class="border-b pb-2 border-gray-200 dark:border-gray-700">
+                <li class="border-b pb-2 border-gray-200 dark:border-gray-700">
                 <div class="flex items-center gap-2">
-                  @php
+                    @php
                     $sev = strtolower($f['severity'] ?? 'info');
                     $sevClass = match($sev) {
-                      'high'   => 'bg-red-100 text-red-800',
-                      'medium' => 'bg-amber-100 text-amber-800',
-                      'low'    => 'bg-blue-100 text-blue-800',
-                      default  => 'bg-gray-200 text-gray-800'
+                        'high'   => 'bg-red-100 text-red-800',
+                        'medium' => 'bg-amber-100 text-amber-800',
+                        'low'    => 'bg-blue-100 text-blue-800',
+                        default  => 'bg-gray-200 text-gray-800'
                     };
-                  @endphp
-                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium {{ $sevClass }}">
+                    @endphp
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium {{ $sevClass }}">
                     {{ ucfirst($sev) }}
-                  </span>
-                  <span>{{ $f['message'] ?? '' }}</span>
+                    </span>
+                    <span>{{ $f['message'] ?? '' }}</span>
                 </div>
                 @if(!empty($f['evidence']))
-                  <details class="ml-6 mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    <details class="ml-6 mt-1 text-xs text-gray-600 dark:text-gray-300">
                     <summary class="cursor-pointer">Evidence</summary>
                     <pre class="whitespace-pre-wrap break-all">{{ json_encode($f['evidence'], JSON_PRETTY_PRINT) }}</pre>
-                  </details>
+                    </details>
                 @endif
-              </li>
+                </li>
             @empty
-              <li class="text-sm text-gray-500">No heuristic findings.</li>
+                <li class="text-sm text-gray-500">No heuristic findings.</li>
             @endforelse
-          </ul>
+            </ul>
         </div>
-      @endif
+        @endif
 
       {{-- Extracted URLs --}}
       @if ($scan->urls->count() > 0)
