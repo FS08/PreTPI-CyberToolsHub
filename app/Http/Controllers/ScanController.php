@@ -38,10 +38,12 @@ class ScanController extends Controller
         $message = $parser->parse($raw, false);
 
         // 4) Basic headers (cast to string, trim; they can be null)
-        $from    = trim((string) $message->getHeaderValue('from'));
-        $to      = trim((string) $message->getHeaderValue('to'));
-        $subject = trim((string) $message->getHeaderValue('subject'));
-        $dateRaw = trim((string) $message->getHeaderValue('date'));
+        $from       = trim((string) $message->getHeaderValue('from'));
+        $to         = trim((string) $message->getHeaderValue('to'));
+        $subject    = trim((string) $message->getHeaderValue('subject'));
+        $dateRaw    = trim((string) $message->getHeaderValue('date'));
+        $replyTo    = trim((string) $message->getHeaderValue('reply-to'));   // NEW
+        $replyDomain= $this->extractDomainFromAddress($replyTo);             // NEW
 
         // Normalize date → ISO-8601 (best effort)
         $dateIso = null;
@@ -79,8 +81,18 @@ class ScanController extends Controller
         $spf   = $fromDomain ? $this->lookupSpfForDomain($fromDomain)   : ['found' => false, 'records' => [], 'note' => 'No sender domain'];
         $dmarc = $fromDomain ? $this->lookupDmarcForDomain($fromDomain) : ['found' => false, 'records' => [], 'note' => 'No sender domain'];
 
-        // 11) Heuristics (5.4) — first rule: brand/display vs real domain
-        $heuristics = $this->computeHeuristics(from: $from, realDomain: $fromDomain, spf: $spf, dmarc: $dmarc);
+        // 11) Heuristics (H‑1 … H‑8)
+        $heuristics = $this->evaluateHeuristics([
+            'from'        => $from,
+            'fromDomain'  => $fromDomain,
+            'replyTo'     => $replyTo,
+            'replyDomain' => $replyDomain,
+            'subject'     => $subject,
+            'textBody'    => $textBody,
+            'urls'        => $urls,
+            'spf'         => $spf,
+            'dmarc'       => $dmarc,
+        ]);
 
         // 12) Build payload for UI
         $results = [
@@ -104,6 +116,8 @@ class ScanController extends Controller
                 'spf'         => $spf,
                 'dmarc'       => $dmarc,
                 'heuristics'  => $heuristics,
+                'replyTo'     => $replyTo,
+                'replyDomain' => $replyDomain,
             ],
         ];
 
@@ -124,7 +138,7 @@ class ScanController extends Controller
             'urls_json'         => $urls,
             'spf_json'          => $spf,
             'dmarc_json'        => $dmarc,
-            'heuristics_json'   => $heuristics, // <-- NEW
+            'heuristics_json'   => $heuristics,
         ]);
 
         // 14) Submit URLs to urlscan.io (non‑blocking)
@@ -148,14 +162,12 @@ class ScanController extends Controller
 
                 try {
                     $resp = $this->urlscan->submit($u, $visibility);
-
                     $row->update([
                         'status'       => 'submitted',
                         'result_uuid'  => $resp['uuid']   ?? null,
                         'result_url'   => $resp['result'] ?? null,
                         'error_message'=> null,
                     ]);
-
                     $submitted[] = [
                         'url' => $u, 'uuid' => $resp['uuid'] ?? null, 'result' => $resp['result'] ?? null, 'status' => 'submitted',
                     ];
@@ -164,15 +176,10 @@ class ScanController extends Controller
                         'status'        => 'error',
                         'error_message' => $e->getMessage(),
                     ]);
-
-                    $submitted[] = [
-                        'url' => $u, 'status' => 'error', 'error' => $e->getMessage(),
-                    ];
+                    $submitted[] = ['url' => $u, 'status' => 'error', 'error' => $e->getMessage()];
                 }
 
-                if ($sleepMs > 0) {
-                    usleep($sleepMs * 1000);
-                }
+                if ($sleepMs > 0) usleep($sleepMs * 1000);
             }
         }
 
@@ -210,7 +217,7 @@ class ScanController extends Controller
                 'dateIso'     => optional($scan->date_iso)->toIso8601String(),
                 'spf'         => $scan->spf_json,
                 'dmarc'       => $scan->dmarc_json,
-                'heuristics'  => $scan->heuristics_json, // expose to view
+                'heuristics'  => $scan->heuristics_json,
             ],
         ];
 
@@ -225,7 +232,6 @@ class ScanController extends Controller
     {
         if (!$from || trim($from) === '') return null;
 
-        // Name <email@domain>
         if (preg_match('/<([^>]+)>/', $from, $m)) {
             $email = $m[1];
         } elseif (preg_match('/[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})/i', $from, $m)) {
@@ -267,7 +273,7 @@ class ScanController extends Controller
         return $scheme . '://' . $host . $path . $query . $frag;
     }
 
-    /** SPF lookup (existing) */
+    /** SPF lookup */
     private function lookupSpfForDomain(string $domain): array
     {
         $out = ['found' => false, 'records' => [], 'parsed' => [], 'error' => null];
@@ -327,7 +333,7 @@ class ScanController extends Controller
         return ['record' => $record, 'mechanisms' => $mechanisms, 'all' => $all, 'redirect' => $redirect, 'exp' => $exp];
     }
 
-    /** DMARC lookup (NEW) */
+    /** DMARC lookup */
     private function lookupDmarcForDomain(string $domain): array
     {
         $out = ['found' => false, 'domain' => $domain, 'records' => [], 'parsed' => [], 'error' => null];
@@ -369,10 +375,8 @@ class ScanController extends Controller
 
     private function parseDmarcRecord(string $record): array
     {
-        // Remove v=DMARC1;
         $rest = trim(preg_replace('/^v\s*=\s*DMARC1\s*;?/i', '', $record));
 
-        // Split k=v; pairs
         $tags = [];
         foreach (preg_split('/\s*;\s*/', $rest, -1, PREG_SPLIT_NO_EMPTY) as $kv) {
             if (!str_contains($kv, '=')) continue;
@@ -392,152 +396,226 @@ class ScanController extends Controller
         return compact('record','policy','subPol','rua','ruf','pct','fo','adkim','aspf');
     }
 
-    /* ======================== Heuristics (5.4) ======================== */
+    /* ======================== Heuristics (H‑1 … H‑8) ======================== */
 
     /**
-     * Compute simple heuristics and a tiny score.
-     * - H-1: display/brand token vs real sender domain core mismatch
-     * - H-2: weak auth combo (SPF soft + DMARC none) -> small warning
+     * Main evaluator – returns ['score'=>int,'findings'=>[...]]
+     * Context keys: from, fromDomain, replyTo, replyDomain, subject, textBody, urls, spf, dmarc
      */
-    private function computeHeuristics(?string $from, ?string $realDomain, array $spf = [], array $dmarc = []): array
+    private function evaluateHeuristics(array $c): array
     {
         $findings = [];
-        $score    = 0;
+        $score = 0;
+        $add = function (?array $f) use (&$findings, &$score) {
+            if ($f) { $findings[] = $f; $score += (int) ($f['score'] ?? 0); }
+        };
 
-        // Parse "From:" into display + email + domain
-        $parts = $this->parseFromParts($from);
-        $display      = $parts['display'] ?? null;
-        $displayToken = $this->brandToken($display);        // e.g. "paypal" from "PayPal Support"
-        $displayDom   = $parts['display_domain'] ?? null;   // if display contained something like (example.com)
-        $realCore     = $this->coreDomain($realDomain);     // e.g. "paypal.com" from "mail.paypal.com"
-        $displayCore  = $this->coreDomain($displayDom);
+        $add($this->h1DisplayVsRealDomain($c));   // display/brand vs real domain
+        $add($this->h2UrgencyKeywords($c));       // urgency/pressure
+        $add($this->h3ReplyToMismatch($c));       // reply-to domain ≠ from domain
+        $add($this->h4LinksOffBrand($c));         // links not on sender brand
+        $add($this->h5FreemailClaimsBrand($c));   // freemail + brandish display
+        $add($this->h6WeakAuthCombo($c));         // SPF weak + DMARC none
+        $add($this->h7SuspiciousTld($c));         // risky TLDs
+        $add($this->h8PunycodeHomoglyph($c));     // punycode / IDN
 
-        // H-1: If we have a brand token and a real domain, and the real core doesn't contain the token, flag it.
-        if ($displayToken && $realCore && !str_contains($realCore, $displayToken)) {
-            $findings[] = [
+        if ($score > 100) $score = 100;
+
+        return ['score' => $score, 'findings' => array_values(array_filter($findings))];
+    }
+
+    private function h1DisplayVsRealDomain(array $c): ?array
+    {
+        $from        = (string)($c['from'] ?? '');
+        $realDomain  = (string)($c['fromDomain'] ?? '');
+        $displayToken = null; $displayDomain = null;
+
+        if (preg_match('/"([^"]+)"/', $from, $m)) {
+            $displayToken = strtolower($m[1]);
+        }
+        if (!$displayToken && preg_match('/^([^<]+)</', $from, $m)) {
+            $displayToken = strtolower(trim($m[1]));
+        }
+        if (!$displayToken && preg_match('/@([A-Z0-9.-]+\.[A-Z]{2,})/i', $from, $m)) {
+            $displayDomain = strtolower($m[1]);
+        }
+
+        $realCore = $this->coreDomain($realDomain);
+        $dispCore = $displayDomain ? $this->coreDomain($displayDomain) : null;
+        $brandish = $this->looksBrandish($displayToken);
+
+        if ($brandish && $realCore) {
+            return [
                 'id'       => 'H-1-domain-mismatch',
                 'severity' => 'medium',
                 'score'    => 15,
-                'message'  => 'Display/brand suggests "' . $displayToken . '" but real sender domain is ' . $realCore,
-                'evidence' => [
-                    'display'       => $display,
-                    'displayToken'  => $displayToken,
-                    'displayDomain' => $displayDom,
-                    'displayCore'   => $displayCore,
-                    'realDomain'    => $realDomain,
-                    'realCore'      => $realCore,
-                ],
+                'message'  => 'Display/brand suggests "' . ($displayToken ?: ($dispCore ?: 'brand')) . '" but real sender domain is ' . $realCore,
+                'evidence' => compact('from','realDomain','realCore','displayToken','displayDomain','dispCore'),
             ];
-            $score += 15;
         }
-
-        // H-2: weak auth combo — SPF soft (~all/?all/+all) and DMARC not enforcing (p=none / missing)
-        $spfAll = $this->spfAllQualifier($spf); // returns '-all'|'~all'|'+all'|'?all'|null
-        $p      = strtolower((string) data_get($dmarc, 'parsed.0.policy', '')) ?: (data_get($dmarc, 'found') ? 'none' : 'none');
-
-        if (in_array($spfAll, ['~all', '?all', '+all'], true) && in_array($p, ['none', ''], true)) {
-            $findings[] = [
-                'id'       => 'H-2-weak-auth',
-                'severity' => 'low',
-                'score'    => 10,
-                'message'  => 'Weak authentication posture (SPF ' . ($spfAll ?: 'n/a') . ', DMARC ' . $p . ').',
-            ];
-            $score += 10;
-        }
-
-        return [
-            'score'    => $score,     // 0..100 (small for now)
-            'findings' => $findings,  // array of items above
-            'meta'     => [
-                'display'      => $display,
-                'displayToken' => $displayToken,
-                'displayDomain'=> $displayDom,
-                'realDomain'   => $realDomain,
-                'realCore'     => $realCore,
-            ],
-        ];
+        return null;
     }
 
-    /** Parse From header to display, email, domain, plus any domain hint inside display (e.g., "Brand (brand.com)") */
-    private function parseFromParts(?string $from): array
+    private function h2UrgencyKeywords(array $c): ?array
     {
-        $out = ['display' => null, 'email' => null, 'domain' => null, 'display_domain' => null];
-        if (!$from) return $out;
+        $subject = strtolower((string)($c['subject'] ?? ''));
+        $text    = strtolower((string)($c['textBody'] ?? ''));
 
-        // display name
-        if (preg_match('/^"?(.*?)"?\s*</', $from, $m)) {
-            $out['display'] = trim($m[1], " \t\"'");
-        } else {
-            // If no <...>, maybe it’s only a name or just email
-            $out['display'] = trim(preg_replace('/<.*>/', '', $from)) ?: null;
+        $strong = ['urgent','immediately','suspend','locked','breach','compromised','verify now','overdue','final notice'];
+        $weak   = ['verify','confirm','update account','password','invoice','payment','limited time','click','security alert'];
+
+        $hits = [];
+        foreach ($strong as $w) if (str_contains($subject, $w) || str_contains($text, $w)) $hits[] = $w;
+        foreach ($weak   as $w) if (str_contains($subject, $w) || str_contains($text, $w)) $hits[] = $w;
+
+        $hits = array_values(array_unique($hits));
+        if (!$hits) return null;
+
+        $sev   = count($hits) >= 2 ? 'medium' : 'low';
+        $score = count($hits) >= 2 ? 10 : 5;
+
+        return ['id'=>'H-2-urgency','severity'=>$sev,'score'=>$score,'message'=>'Urgency/pressure keywords present','evidence'=>['hits'=>$hits]];
+    }
+
+    private function h3ReplyToMismatch(array $c): ?array
+    {
+        $fromCore  = $this->coreDomain((string)($c['fromDomain']  ?? ''));
+        $replyCore = $this->coreDomain((string)($c['replyDomain'] ?? ''));
+        if ($fromCore && $replyCore && $fromCore !== $replyCore) {
+            return ['id'=>'H-3-replyto-mismatch','severity'=>'medium','score'=>15,
+                'message'=>"Reply-To domain ($replyCore) differs from From domain ($fromCore)",
+                'evidence'=>compact('fromCore','replyCore')];
         }
+        return null;
+    }
 
-        // email and domain
-        if (preg_match('/<([^>]+)>/', $from, $m)) {
-            $out['email'] = strtolower(trim($m[1]));
-        } elseif (preg_match('/([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})/i', $from, $m)) {
-            $out['email'] = strtolower(trim($m[1]));
-        }
+    private function h4LinksOffBrand(array $c): ?array
+    {
+        $fromCore = $this->coreDomain((string)($c['fromDomain'] ?? ''));
+        $urls     = (array)($c['urls'] ?? []);
+        if (!$fromCore || !$urls) return null;
 
-        if ($out['email'] && str_contains($out['email'], '@')) {
-            $out['domain'] = strtolower(substr(strrchr($out['email'], '@'), 1));
-        }
-
-        // try to pull a domain hint from display e.g. "Foo Support (foo.com)"
-        if ($out['display'] && preg_match('/\(([^)]+)\)/', $out['display'], $m)) {
-            $hint = strtolower(trim($m[1]));
-            if (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/i', $hint)) {
-                $out['display_domain'] = $hint;
+        $allow = ['bit.ly','tinyurl.com','linktr.ee','lnkd.in','goo.gl'];
+        $off = [];
+        foreach ($urls as $u) {
+            $host = parse_url($u, PHP_URL_HOST);
+            $core = $this->coreDomain($host);
+            if ($core && $core !== $fromCore && !in_array($core, $allow, true)) {
+                $off[] = ['url'=>$u,'core'=>$core];
             }
         }
-
-        return $out;
-    }
-
-    /** Crude brand token from display name: lowercase alphanum of first "wordish" token ≥ 3 chars */
-    private function brandToken(?string $display): ?string
-    {
-        if (!$display) return null;
-        $d = strtolower($display);
-        // remove punctuation
-        $d = preg_replace('/[^a-z0-9 ]+/', ' ', $d);
-        $d = preg_replace('/\s+/', ' ', $d);
-        foreach (explode(' ', trim($d)) as $tok) {
-            if (strlen($tok) >= 3) return $tok;
+        if ($off && count($off) === count($urls)) {
+            return ['id'=>'H-4-links-off-brand','severity'=>'medium','score'=>15,
+                'message'=>'All links point to domains different from the sender’s core domain',
+                'evidence'=>['fromCore'=>$fromCore,'off'=>$off]];
         }
         return null;
     }
 
-    /** Very light "core" (registrable-ish) domain guess (handles a few common multi-label TLDs) */
-    private function coreDomain(?string $host): ?string
+    private function h5FreemailClaimsBrand(array $c): ?array
     {
-        if (!$host) return null;
-        $h = strtolower($host);
-        $labels = explode('.', $h);
-        if (count($labels) < 2) return $h;
+        $fromDomain = strtolower((string)($c['fromDomain'] ?? ''));
+        $freemail = ['gmail.com','outlook.com','hotmail.com','live.com','yahoo.com','icloud.com','proton.me','protonmail.com','gmx.com','aol.com'];
+        if (!in_array($fromDomain, $freemail, true)) return null;
 
-        // known multi-label TLDs (small subset)
-        $mlt = ['co.uk','ac.uk','gov.uk','co.jp','com.au','com.br','com.ar'];
-        $lastTwo = implode('.', array_slice($labels, -2));
-        $lastThree = implode('.', array_slice($labels, -3));
+        $from = strtolower((string)($c['from'] ?? ''));
+        $displayToken = null;
+        if (preg_match('/"([^"]+)"/', $from, $m))      $displayToken = strtolower($m[1]);
+        elseif (preg_match('/^([^<]+)</', $from, $m))  $displayToken = strtolower(trim($m[1]));
 
-        if (in_array($lastThree, $mlt, true)) {
-            return implode('.', array_slice($labels, -3));
-        }
-        if (in_array($lastTwo, $mlt, true)) {
-            return implode('.', array_slice($labels, -3)); // e.g., x.co.uk -> take 3 labels
-        }
-        return $lastTwo;
+        if (!$this->looksBrandish($displayToken)) return null;
+
+        return ['id'=>'H-5-freemail-claims-brand','severity'=>'medium','score'=>15,
+            'message'=>"Freemail sender ($fromDomain) presenting brand-like display name",
+            'evidence'=>['from'=>$from,'fromDomain'=>$fromDomain,'displayToken'=>$displayToken]];
     }
 
-    /** Extract the SPF "all" qualifier if present across parsed records */
-    private function spfAllQualifier(array $spf): ?string
+    private function h6WeakAuthCombo(array $c): ?array
     {
-        $parsed = (array) data_get($spf, 'parsed', []);
-        foreach ($parsed as $p) {
-            $all = data_get($p, 'all');
-            if ($all) return strtolower($all);
+        $spf   = (array)($c['spf']   ?? []);
+        $dmarc = (array)($c['dmarc'] ?? []);
+
+        $spfWeak = empty($spf['found']);
+        if (!$spfWeak && !empty($spf['parsed'])) {
+            $qual = null;
+            foreach ($spf['parsed'] as $p) { $qual = $qual ?? ($p['all'] ?? null); }
+            if (in_array($qual, ['~all','?all','+all'], true)) $spfWeak = true;
+        }
+        $dmarcWeak = empty($dmarc['found']) || strtolower((string)($dmarc['parsed'][0]['policy'] ?? 'none')) === 'none';
+
+        if ($spfWeak && $dmarcWeak) {
+            return ['id'=>'H-6-weak-auth','severity'=>'low','score'=>10,
+                'message'=>'Weak authentication: SPF weak/missing and DMARC none/not found',
+                'evidence'=>['spf'=>$spf,'dmarc'=>$dmarc]];
         }
         return null;
+    }
+
+    private function h7SuspiciousTld(array $c): ?array
+    {
+        $risk = ['ru','cn','top','icu','zip','cam','tokyo','country','support','xyz','click','live'];
+        $fromTld = $this->tld((string)($c['fromDomain'] ?? ''));
+        $urls    = (array)($c['urls'] ?? []);
+        $bad = 0;
+
+        if ($fromTld && in_array($fromTld, $risk, true)) $bad += 5;
+        foreach ($urls as $u) {
+            $host = parse_url($u, PHP_URL_HOST);
+            $tld  = $this->tld((string)$host);
+            if ($tld && in_array($tld, $risk, true)) { $bad += 5; break; }
+        }
+
+        if ($bad > 0) {
+            return ['id'=>'H-7-suspicious-tld','severity'=>'low','score'=>min(10,$bad),
+                'message'=>'Suspicious top-level domain on sender or links',
+                'evidence'=>['fromTld'=>$fromTld]];
+        }
+        return null;
+    }
+
+    private function h8PunycodeHomoglyph(array $c): ?array
+    {
+        $domains = [];
+        if (!empty($c['fromDomain']))   $domains[] = $c['fromDomain'];
+        if (!empty($c['replyDomain']))  $domains[] = $c['replyDomain'];
+        foreach ((array)($c['urls'] ?? []) as $u) {
+            $host = parse_url($u, PHP_URL_HOST);
+            if ($host) $domains[] = $host;
+        }
+
+        $puny = [];
+        foreach ($domains as $d) {
+            if (str_contains($d, 'xn--') || preg_match('/[^\x20-\x7E]/', $d)) $puny[] = $d;
+        }
+        if ($puny) {
+            return ['id'=>'H-8-punycode','severity'=>'medium','score'=>15,
+                'message'=>'Punycode/homoglyph domains detected',
+                'evidence'=>['domains'=>$puny]];
+        }
+        return null;
+    }
+
+    /* --- tiny helpers for heuristics --- */
+    private function coreDomain(?string $domain): ?string
+    {
+        if (!$domain) return null;
+        $parts = explode('.', strtolower($domain));
+        return count($parts) >= 2 ? implode('.', array_slice($parts, -2)) : $domain;
+    }
+    private function tld(string $domain): ?string
+    {
+        if ($domain === '') return null;
+        $parts = explode('.', strtolower($domain));
+        return end($parts) ?: null;
+    }
+    private function looksBrandish(?string $token): bool
+    {
+        if (!$token) return false;
+        $brands = ['paypal','apple','microsoft','amazon','google','bank','netflix','facebook','instagram','dhl','ups','stripe','billing','support','service','security'];
+        $t = strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $token));
+        foreach (preg_split('/\s+/', $t) as $w) {
+            if ($w !== '' && in_array($w, $brands, true)) return true;
+        }
+        return false;
     }
 }
