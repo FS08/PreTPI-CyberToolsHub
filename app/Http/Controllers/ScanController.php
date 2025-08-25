@@ -10,6 +10,8 @@ use App\Services\UrlscanClient;
 use ZBateson\MailMimeParser\MailMimeParser;
 use ZBateson\MailMimeParser\Message;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class ScanController extends Controller
 {
@@ -203,10 +205,96 @@ class ScanController extends Controller
             ->with('urlscanSubmitted', $submitted);
     }
 
-    public function history()
+    public function history(Request $request)
     {
-        $scans = Scan::where('user_id', auth()->id())->latest()->paginate(10);
-        return view('history', compact('scans'));
+        $uid        = Auth::id();
+        $q          = trim((string) $request->input('q', ''));
+        $fromDomain = trim((string) $request->input('from_domain', ''));
+        $dateFrom   = $request->input('date_from'); // YYYY-MM-DD
+        $dateTo     = $request->input('date_to');   // YYYY-MM-DD
+        $risk       = strtolower((string) $request->input('risk', ''));    // '', low, medium, high
+        $scoreMin   = $request->filled('score_min') ? (int) $request->input('score_min') : null;
+        $scoreMax   = $request->filled('score_max') ? (int) $request->input('score_max') : null;
+        $sort       = (string) $request->input('sort', 'date_desc');       // date_desc|date_asc|score_desc|score_asc
+
+        $hasScoreCol = Schema::hasColumn('scans', 'heuristics_score');
+
+        // Build a score expression we can reuse (numeric)
+        $scoreExpr = $hasScoreCol
+            ? DB::raw('heuristics_score')
+            : DB::raw("CAST(JSON_EXTRACT(heuristics_json, '$.score') AS UNSIGNED)");
+
+        // Base scope: current user (uncomment orWhereNull if you want legacy rows too)
+        $query = Scan::query()
+            ->where('user_id', $uid);
+            // ->orWhereNull('user_id'); // optional: include legacy rows
+
+        // Text search
+        if ($q !== '') {
+            $query->where(function ($w) use ($q) {
+                $w->where('from', 'like', "%{$q}%")
+                ->orWhere('subject', 'like', "%{$q}%")
+                ->orWhere('from_domain', 'like', "%{$q}%");
+            });
+        }
+
+        // From domain filter
+        if ($fromDomain !== '') {
+            $query->where('from_domain', 'like', "%{$fromDomain}%");
+        }
+
+        // Date range on created_at (stable, always there)
+        if (!empty($dateFrom)) {
+            $query->whereDate('created_at', '>=', $dateFrom);
+        }
+        if (!empty($dateTo)) {
+            $query->whereDate('created_at', '<=', $dateTo);
+        }
+
+        // Risk filter via score thresholds
+        if (in_array($risk, ['low','medium','high'], true)) {
+            $query->where(function ($w) use ($risk, $scoreExpr) {
+                if ($risk === 'low')    $w->where($scoreExpr, '<', 20);
+                if ($risk === 'medium') $w->whereBetween($scoreExpr, [20, 49]);
+                if ($risk === 'high')   $w->where($scoreExpr, '>=', 50);
+            });
+        }
+
+        // Score min/max
+        if ($scoreMin !== null) $query->where($scoreExpr, '>=', $scoreMin);
+        if ($scoreMax !== null) $query->where($scoreExpr, '<=', $scoreMax);
+
+        // Sorting (use created_at for date)
+        switch ($sort) {
+            case 'date_asc':
+                $query->orderBy('created_at', 'asc');
+                break;
+            case 'score_desc':
+                $query->orderBy($scoreExpr, 'desc')->orderBy('created_at', 'desc');
+                break;
+            case 'score_asc':
+                $query->orderBy($scoreExpr, 'asc')->orderBy('created_at', 'desc');
+                break;
+            default: // date_desc
+                $query->orderBy('created_at', 'desc');
+                break;
+        }
+
+        $scans = $query->paginate(10)->withQueryString();
+
+        return view('history', [
+            'scans' => $scans,
+            'filters' => [
+                'q' => $q,
+                'from_domain' => $fromDomain,
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+                'risk' => $risk,
+                'score_min' => $scoreMin,
+                'score_max' => $scoreMax,
+                'sort' => $sort,
+            ],
+        ]);
     }
 
     public function show(Scan $scan)
