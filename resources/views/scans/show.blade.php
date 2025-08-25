@@ -15,29 +15,77 @@
   <div class="p-6">
     <div class="max-w-3xl mx-auto bg-white shadow rounded-xl p-6 space-y-6 dark:bg-gray-800 dark:text-gray-100">
 
-      {{-- Summary --}}
-      <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-        <h3 class="font-semibold mb-2">Parsed summary</h3>
-        <dl class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-          <div><dt class="text-gray-500 dark:text-gray-400">From</dt><dd>{{ $scan->from ?? '—' }}</dd></div>
-          <div><dt class="text-gray-500 dark:text-gray-400">From domain</dt><dd>{{ $scan->from_domain ?? '—' }}</dd></div>
-          <div><dt class="text-gray-500 dark:text-gray-400">To</dt><dd>{{ $scan->to ?? '—' }}</dd></div>
-          <div><dt class="text-gray-500 dark:text-gray-400">Subject</dt><dd>{{ $scan->subject ?? '—' }}</dd></div>
-          <div><dt class="text-gray-500 dark:text-gray-400">Date</dt><dd>{{ $scan->date_iso ?? $scan->date_raw ?? '—' }}</dd></div>
-          <div><dt class="text-gray-500 dark:text-gray-400">Attachments</dt><dd>{{ $scan->attachments_count ?? 0 }}</dd></div>
-          <div><dt class="text-gray-500 dark:text-gray-400">Raw size</dt><dd>{{ number_format($scan->raw_size) }} bytes</dd></div>
-        </dl>
+      @php
+        // Pull persisted + flash results
+        $spf        = data_get($results, 'extra.spf')   ?? ($scan->spf_json   ?? null);
+        $dmarc      = data_get($results, 'extra.dmarc') ?? ($scan->dmarc_json ?? null);
+        $heuristics = data_get($results, 'extra.heuristics') ?? ($scan->heuristics_json ?? null);
+
+        // ---- Heuristic banner data (with sane fallbacks) ----
+        $score = (int) data_get($heuristics, 'score', 0);
+        $risk  = data_get($heuristics, 'risk', $score >= 50 ? 'high' : ($score >= 20 ? 'medium' : 'low'));
+        $verdict = data_get($heuristics, 'verdict'); // may be null if you haven’t added it yet in 6.3
+        $findings = (array) data_get($heuristics, 'findings', []);
+
+        // Build a short justification if backend didn’t set one
+        $autoJust = collect($findings)->take(4)->map(function($f){
+            return trim((string) data_get($f, 'message', ''));
+        })->filter()->implode('; ');
+        $justification = trim((string) (data_get($heuristics, 'justification', '') ?: $autoJust));
+
+        // Colors & icons
+        $scoreClass = $score >= 50 ? 'bg-red-100 text-red-800'
+                    : ($score >= 20 ? 'bg-amber-100 text-amber-800'
+                    : 'bg-green-100 text-green-800');
+        $riskPill   = $risk === 'high' ? 'bg-red-600 text-white'
+                    : ($risk === 'medium' ? 'bg-amber-600 text-white'
+                    : 'bg-green-600 text-white');
+        $icon = $risk === 'high' ? '🛑' : ($risk === 'medium' ? '⚠️' : '✅');
+        $verdictText = $verdict ? str_replace('_',' ', ucfirst($verdict)) : ($risk === 'high' ? 'Likely phishing' : ($risk === 'medium' ? 'Suspicious' : 'Low risk'));
+      @endphp
+
+      {{-- Verdict Banner --}}
+      <div class="rounded-xl p-4 border
+                  {{ $risk === 'high' ? 'bg-red-50 border-red-200 dark:border-red-700 dark:bg-red-900/20' :
+                     ($risk === 'medium' ? 'bg-amber-50 border-amber-200 dark:border-amber-700 dark:bg-amber-900/20' :
+                                            'bg-green-50 border-green-200 dark:border-green-700 dark:bg-green-900/20') }}">
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="text-2xl">{{ $icon }}</div>
+          <div class="flex items-center gap-2">
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $riskPill }}">
+              {{ $verdictText }}
+            </span>
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $scoreClass }}">
+              Score: {{ $score }}
+            </span>
+          </div>
+        </div>
+        @if($justification)
+          <p class="mt-2 text-sm text-gray-800 dark:text-gray-200">
+            {{ $justification }}
+          </p>
+        @endif
       </div>
+
+      {{-- Parsed summary --}}
+      <details open class="rounded-lg border border-gray-200 dark:border-gray-700">
+        <summary class="cursor-pointer px-4 py-3 font-semibold">Parsed summary</summary>
+        <div class="px-4 pb-4">
+          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+            <div><dt class="text-gray-500 dark:text-gray-400">From</dt><dd>{{ $scan->from ?? '—' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">From domain</dt><dd>{{ $scan->from_domain ?? '—' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">To</dt><dd>{{ $scan->to ?? '—' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Subject</dt><dd>{{ $scan->subject ?? '—' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Date</dt><dd>{{ $scan->date_iso ?? $scan->date_raw ?? '—' }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Attachments</dt><dd>{{ $scan->attachments_count ?? 0 }}</dd></div>
+            <div><dt class="text-gray-500 dark:text-gray-400">Raw size</dt><dd>{{ number_format($scan->raw_size) }} bytes</dd></div>
+          </dl>
+        </div>
+      </details>
 
       {{-- Sender authentication (SPF + DMARC) --}}
       @php
-        $spf   = data_get($results, 'extra.spf')   ?? ($scan->spf_json   ?? null);
-        $dmarc = data_get($results, 'extra.dmarc') ?? ($scan->dmarc_json ?? null);
-        $heuristics = data_get($results,'extra.heuristics') ?? ($scan->heuristics_json ?? null);
-      @endphp
-
-      {{-- SPF badge --}}
-      @php
+        // SPF badge
         $spfBadge = ['class'=>'bg-gray-200 text-gray-800','text'=>'SPF: not checked','detail'=>''];
         if (is_array($spf)) {
           if (!empty($spf['error'])) {
@@ -66,10 +114,8 @@
             }
           }
         }
-      @endphp
 
-      {{-- DMARC badge --}}
-      @php
+        // DMARC badge
         $dmarcBadge = ['class'=>'bg-gray-200 text-gray-800','text'=>'DMARC: not checked','detail'=>''];
         if (is_array($dmarc)) {
           if (!empty($dmarc['error'])) {
@@ -78,82 +124,39 @@
             $dmarcBadge = ['class'=>'bg-red-100 text-red-800','text'=>'DMARC: not found','detail'=>'No _dmarc TXT'];
           } else {
             $p = strtolower((string) data_get($dmarc,'parsed.0.policy',''));
-            if ($p === 'reject') {
-              $dmarcBadge = ['class'=>'bg-green-100 text-green-800','text'=>'DMARC: p=reject','detail'=>'Strong enforcement'];
-            } elseif ($p === 'quarantine') {
-              $dmarcBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>'DMARC: p=quarantine','detail'=>'Partial enforcement'];
-            } elseif ($p === 'none') {
-              $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: p=none','detail'=>'Monitor only'];
-            } else {
-              $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: found','detail'=>'Policy: '.$p];
-            }
+            if     ($p === 'reject')     $dmarcBadge = ['class'=>'bg-green-100 text-green-800','text'=>'DMARC: p=reject','detail'=>'Strong enforcement'];
+            elseif ($p === 'quarantine') $dmarcBadge = ['class'=>'bg-amber-100 text-amber-800','text'=>'DMARC: p=quarantine','detail'=>'Partial enforcement'];
+            elseif ($p === 'none')       $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: p=none','detail'=>'Monitor only'];
+            else                          $dmarcBadge = ['class'=>'bg-blue-100 text-blue-800','text'=>'DMARC: found','detail'=>'Policy: '.$p];
           }
         }
       @endphp
 
-      <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-        <h3 class="font-semibold mb-3">Sender authentication</h3>
-        <div class="flex flex-col gap-3">
+      <details open class="rounded-lg border border-gray-200 dark:border-gray-700">
+        <summary class="cursor-pointer px-4 py-3 font-semibold">Sender authentication</summary>
+        <div class="px-4 pb-4 flex flex-col gap-3">
           <div class="flex items-start gap-2">
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $spfBadge['class'] }}">
               {{ $spfBadge['text'] }}
             </span>
-            @if($spfBadge['detail'])
-              <span class="text-xs text-gray-600 dark:text-gray-300">{{ $spfBadge['detail'] }}</span>
-            @endif
+            @if($spfBadge['detail']) <span class="text-xs text-gray-600 dark:text-gray-300">{{ $spfBadge['detail'] }}</span> @endif
           </div>
           <div class="flex items-start gap-2">
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $dmarcBadge['class'] }}">
               {{ $dmarcBadge['text'] }}
             </span>
-            @if($dmarcBadge['detail'])
-              <span class="text-xs text-gray-600 dark:text-gray-300">{{ $dmarcBadge['detail'] }}</span>
-            @endif
+            @if($dmarcBadge['detail']) <span class="text-xs text-gray-600 dark:text-gray-300">{{ $dmarcBadge['detail'] }}</span> @endif
           </div>
         </div>
-      </div>
+      </details>
 
-      {{-- Heuristics (6.2 + 6.3) --}}
+      {{-- Heuristics --}}
       @if(is_array($heuristics))
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-          <h3 class="font-semibold mb-3">Heuristic analysis</h3>
-          <div class="mb-3 flex flex-col gap-2">
-            @php
-              $score = (int) data_get($heuristics,'score',0);
-              $risk  = data_get($heuristics,'risk','low');
-              $verdict = data_get($heuristics,'verdict','—');
-              $justification = data_get($heuristics,'justification','');
-
-              $scoreClass = $score >= 50 ? 'bg-red-100 text-red-800'
-                          : ($score >= 20 ? 'bg-amber-100 text-amber-800'
-                          : 'bg-green-100 text-green-800');
-
-              $riskClass = $risk === 'high' ? 'bg-red-600 text-white'
-                          : ($risk === 'medium' ? 'bg-amber-600 text-white'
-                          : 'bg-green-600 text-white');
-            @endphp
-
-            <div class="flex items-center gap-3">
-              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $scoreClass }}">
-                Score: {{ $score }}
-              </span>
-              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $riskClass }}">
-                {{ ucfirst($risk) }} Risk
-              </span>
-              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-900 text-white">
-                Verdict: {{ str_replace('_',' ', ucfirst($verdict)) }}
-              </span>
-            </div>
-
-            @if($justification)
-              <p class="text-sm text-gray-700 dark:text-gray-300">
-                {{ $justification }}
-              </p>
-            @endif
-          </div>
-
+      <details open class="rounded-lg border border-gray-200 dark:border-gray-700">
+        <summary class="cursor-pointer px-4 py-3 font-semibold">Heuristic analysis</summary>
+        <div class="px-4 pb-4">
           <ul class="space-y-2 text-sm">
-            @forelse(data_get($heuristics,'findings',[]) as $f)
+            @forelse($findings as $f)
               <li class="border-b pb-2 border-gray-200 dark:border-gray-700">
                 <div class="flex items-center gap-2">
                   @php
@@ -182,37 +185,42 @@
             @endforelse
           </ul>
         </div>
+      </details>
       @endif
 
       {{-- Extracted URLs --}}
       @if ($scan->urls->count() > 0)
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-          <h3 class="font-semibold mb-2">Extracted URLs ({{ $scan->urls->count() }})</h3>
-          <ul class="space-y-2 text-sm">
-            @foreach ($scan->urls as $u)
-              <li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-gray-200 dark:border-gray-700 pb-2">
-                <div class="break-all">
-                  <a href="{{ $u->url }}" target="_blank" rel="noopener noreferrer nofollow"
-                     class="text-blue-600 dark:text-blue-400 hover:underline">{{ $u->url }}</a>
-                </div>
-                <div class="text-xs text-gray-700 dark:text-gray-300">
-                  @php $label = ucfirst($u->status ?? 'queued'); @endphp
-                  @if ($u->result_url)
-                    ✅ {{ $label }} → <a href="{{ $u->result_url }}" target="_blank" class="underline">View</a>
-                  @elseif ($u->status === 'error')
-                    ❌ Error: {{ $u->error_message }}
-                  @elseif ($u->status === 'blocked')
-                    🚫 Blocked
-                  @elseif ($u->status === 'rate_limited')
-                    ⏳ Rate limited
-                  @else
-                    ⏳ {{ $label }}
-                  @endif
-                </div>
-              </li>
-            @endforeach
-          </ul>
-        </div>
+        <details open class="rounded-lg border border-gray-200 dark:border-gray-700">
+          <summary class="cursor-pointer px-4 py-3 font-semibold">
+            Extracted URLs ({{ $scan->urls->count() }})
+          </summary>
+          <div class="px-4 pb-4">
+            <ul class="space-y-2 text-sm">
+              @foreach ($scan->urls as $u)
+                <li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-gray-200 dark:border-gray-700 pb-2">
+                  <div class="break-all">
+                    <a href="{{ $u->url }}" target="_blank" rel="noopener noreferrer nofollow"
+                      class="text-blue-600 dark:text-blue-400 hover:underline">{{ $u->url }}</a>
+                  </div>
+                  <div class="text-xs text-gray-700 dark:text-gray-300">
+                    @php $label = ucfirst($u->status ?? 'queued'); @endphp
+                    @if ($u->result_url)
+                      ✅ {{ $label }} → <a href="{{ $u->result_url }}" target="_blank" class="underline">View</a>
+                    @elseif ($u->status === 'error')
+                      ❌ Error: {{ $u->error_message }}
+                    @elseif ($u->status === 'blocked')
+                      🚫 Blocked
+                    @elseif ($u->status === 'rate_limited')
+                      ⏳ Rate limited
+                    @else
+                      ⏳ {{ $label }}
+                    @endif
+                  </div>
+                </li>
+              @endforeach
+            </ul>
+          </div>
+        </details>
       @else
         <div class="rounded-lg border border-gray-200 p-4 text-sm text-gray-600 dark:text-gray-300">
           No URLs detected.
