@@ -33,8 +33,11 @@
       @php
         $spf   = data_get($results, 'extra.spf')   ?? ($scan->spf_json   ?? null);
         $dmarc = data_get($results, 'extra.dmarc') ?? ($scan->dmarc_json ?? null);
+        $heuristics = data_get($results,'extra.heuristics') ?? ($scan->heuristics_json ?? null);
+      @endphp
 
-        // SPF badge
+      {{-- SPF badge --}}
+      @php
         $spfBadge = ['class'=>'bg-gray-200 text-gray-800','text'=>'SPF: not checked','detail'=>''];
         if (is_array($spf)) {
           if (!empty($spf['error'])) {
@@ -63,8 +66,10 @@
             }
           }
         }
+      @endphp
 
-        // DMARC badge
+      {{-- DMARC badge --}}
+      @php
         $dmarcBadge = ['class'=>'bg-gray-200 text-gray-800','text'=>'DMARC: not checked','detail'=>''];
         if (is_array($dmarc)) {
           if (!empty($dmarc['error'])) {
@@ -84,15 +89,11 @@
             }
           }
         }
-
-        // Heuristics
-        $heuristics = data_get($results,'extra.heuristics') ?? ($scan->heuristics_json ?? null);
       @endphp
 
       <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
         <h3 class="font-semibold mb-3">Sender authentication</h3>
         <div class="flex flex-col gap-3">
-          {{-- SPF --}}
           <div class="flex items-start gap-2">
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $spfBadge['class'] }}">
               {{ $spfBadge['text'] }}
@@ -101,7 +102,6 @@
               <span class="text-xs text-gray-600 dark:text-gray-300">{{ $spfBadge['detail'] }}</span>
             @endif
           </div>
-          {{-- DMARC --}}
           <div class="flex items-start gap-2">
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $dmarcBadge['class'] }}">
               {{ $dmarcBadge['text'] }}
@@ -113,63 +113,76 @@
         </div>
       </div>
 
-      {{-- Heuristics (6.x) --}}
-        @if(is_array($heuristics))
+      {{-- Heuristics (6.2 + 6.3) --}}
+      @if(is_array($heuristics))
         <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-            <h3 class="font-semibold mb-3">Heuristic analysis</h3>
-            <div class="mb-3 flex items-center gap-3">
+          <h3 class="font-semibold mb-3">Heuristic analysis</h3>
+          <div class="mb-3 flex flex-col gap-2">
             @php
-                $score = (int) data_get($heuristics,'score',0);
-                $scoreClass = $score >= 50 ? 'bg-red-100 text-red-800'
-                            : ($score >= 20 ? 'bg-amber-100 text-amber-800'
-                            : 'bg-green-100 text-green-800');
+              $score = (int) data_get($heuristics,'score',0);
+              $risk  = data_get($heuristics,'risk','low');
+              $verdict = data_get($heuristics,'verdict','—');
+              $justification = data_get($heuristics,'justification','');
 
-                $riskLabel = $score >= 50 ? 'High Risk'
-                        : ($score >= 20 ? 'Medium Risk'
-                        : 'Low Risk');
-                $riskClass = $score >= 50 ? 'bg-red-600 text-white'
-                        : ($score >= 20 ? 'bg-amber-600 text-white'
-                        : 'bg-green-600 text-white');
+              $scoreClass = $score >= 50 ? 'bg-red-100 text-red-800'
+                          : ($score >= 20 ? 'bg-amber-100 text-amber-800'
+                          : 'bg-green-100 text-green-800');
+
+              $riskClass = $risk === 'high' ? 'bg-red-600 text-white'
+                          : ($risk === 'medium' ? 'bg-amber-600 text-white'
+                          : 'bg-green-600 text-white');
             @endphp
-            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $scoreClass }}">
+
+            <div class="flex items-center gap-3">
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $scoreClass }}">
                 Score: {{ $score }}
-            </span>
-            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $riskClass }}">
-                {{ $riskLabel }}
-            </span>
+              </span>
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{ $riskClass }}">
+                {{ ucfirst($risk) }} Risk
+              </span>
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-900 text-white">
+                Verdict: {{ str_replace('_',' ', ucfirst($verdict)) }}
+              </span>
             </div>
 
-            <ul class="space-y-2 text-sm">
+            @if($justification)
+              <p class="text-sm text-gray-700 dark:text-gray-300">
+                {{ $justification }}
+              </p>
+            @endif
+          </div>
+
+          <ul class="space-y-2 text-sm">
             @forelse(data_get($heuristics,'findings',[]) as $f)
-                <li class="border-b pb-2 border-gray-200 dark:border-gray-700">
+              <li class="border-b pb-2 border-gray-200 dark:border-gray-700">
                 <div class="flex items-center gap-2">
-                    @php
+                  @php
                     $sev = strtolower($f['severity'] ?? 'info');
                     $sevClass = match($sev) {
-                        'high'   => 'bg-red-100 text-red-800',
-                        'medium' => 'bg-amber-100 text-amber-800',
-                        'low'    => 'bg-blue-100 text-blue-800',
-                        default  => 'bg-gray-200 text-gray-800'
+                      'high'   => 'bg-red-100 text-red-800',
+                      'medium' => 'bg-amber-100 text-amber-800',
+                      'low'    => 'bg-blue-100 text-blue-800',
+                      default  => 'bg-gray-200 text-gray-800'
                     };
-                    @endphp
-                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium {{ $sevClass }}">
+                  @endphp
+                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium {{ $sevClass }}">
                     {{ ucfirst($sev) }}
-                    </span>
-                    <span>{{ $f['message'] ?? '' }}</span>
+                  </span>
+                  <span>{{ $f['message'] ?? '' }}</span>
                 </div>
                 @if(!empty($f['evidence']))
-                    <details class="ml-6 mt-1 text-xs text-gray-600 dark:text-gray-300">
+                  <details class="ml-6 mt-1 text-xs text-gray-600 dark:text-gray-300">
                     <summary class="cursor-pointer">Evidence</summary>
                     <pre class="whitespace-pre-wrap break-all">{{ json_encode($f['evidence'], JSON_PRETTY_PRINT) }}</pre>
-                    </details>
+                  </details>
                 @endif
-                </li>
+              </li>
             @empty
-                <li class="text-sm text-gray-500">No heuristic findings.</li>
+              <li class="text-sm text-gray-500">No heuristic findings.</li>
             @endforelse
-            </ul>
+          </ul>
         </div>
-        @endif
+      @endif
 
       {{-- Extracted URLs --}}
       @if ($scan->urls->count() > 0)
