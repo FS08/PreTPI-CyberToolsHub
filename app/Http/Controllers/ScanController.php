@@ -41,7 +41,7 @@ class ScanController extends Controller
         $fromH = $message->getHeader('from');
         $fromName = $fromEmail = null;
         if ($fromH && method_exists($fromH, 'getAddresses')) {
-            $addrs = $fromH->getAddresses();            // array of AddressPart
+            $addrs = $fromH->getAddresses();
             if (!empty($addrs)) {
                 $fromEmail = trim((string) $addrs[0]->getEmail());
                 $fromName  = trim((string) $addrs[0]->getName());
@@ -99,7 +99,7 @@ class ScanController extends Controller
         $spf   = $fromDomain ? $this->lookupSpfForDomain($fromDomain)   : ['found' => false, 'records' => [], 'note' => 'No sender domain'];
         $dmarc = $fromDomain ? $this->lookupDmarcForDomain($fromDomain) : ['found' => false, 'records' => [], 'note' => 'No sender domain'];
 
-        // 11) Heuristics
+        // 11) Heuristics (+ 6.3 verdict & justification)
         $heuristics = $this->evaluateHeuristics([
             'from'        => $from,
             'fromDomain'  => $fromDomain,
@@ -402,11 +402,11 @@ class ScanController extends Controller
         return compact('record','policy','subPol','rua','ruf','pct','fo','adkim','aspf');
     }
 
-    /* ======================== Heuristics (H‑1 … H‑8) + 6.2 improvements ======================== */
+    /* ======================== Heuristics (H‑1 … H‑8) + 6.2 + 6.3 ======================== */
 
     private function evaluateHeuristics(array $c): array
     {
-        // normalize
+        // normalize text for keyword rules
         $c['subject']  = $this->normText((string)($c['subject']  ?? ''));
         $c['textBody'] = $this->normText((string)($c['textBody'] ?? ''));
 
@@ -434,10 +434,21 @@ class ScanController extends Controller
         $add($this->h7SuspiciousTld($c),       'H7');
         $add($this->h8PunycodeHomoglyph($c),   'H8');
 
+        // 6.2: score & risk
         $score = max(0, min(100, $score));
         $risk  = $score >= 50 ? 'high' : ($score >= 20 ? 'medium' : 'low');
 
-        return ['score' => $score, 'risk' => $risk, 'findings' => array_values(array_filter($findings))];
+        // 6.3: verdict & justification
+        $verdict       = $this->chooseVerdict($score, $findings);
+        $justification = $this->buildJustification($verdict, $findings);
+
+        return [
+            'score'         => $score,
+            'risk'          => $risk,
+            'verdict'       => $verdict,        // NEW
+            'justification' => $justification,  // NEW
+            'findings'      => array_values(array_filter($findings)),
+        ];
     }
 
     /** H‑1: Brand token in display vs official sender domains */
@@ -447,60 +458,42 @@ class ScanController extends Controller
         $realDomain = (string)($c['fromDomain'] ?? '');
         if ($realDomain === '' || $from === '') return null;
 
-        // Extract display name (works with quoted and unquoted)
+        // Extract display name
         $display = null;
         if (preg_match('/^"([^"]+)"\s*</', $from, $m)) {
             $display = $m[1];
         } elseif (preg_match('/^([^<]+)</', $from, $m)) {
             $display = trim($m[1]);
         } else {
-            // Fallback: try before the email
             $display = trim($from);
         }
 
-        $brand = $this->brandToken($display);              // e.g. "paypal"
+        $brand = $this->brandToken($display);
         if (!$brand) return null;
 
-        $realCore  = $this->coreDomain($realDomain);       // e.g. paypal-login.com
-        $realBase  = $this->secondLevelLabel($realDomain); // e.g. "paypal-login"
-        $exactLike = ($realBase === $brand);               // perfect match to label
-        $contains  = str_contains($realBase, $brand);      // label contains brand with extra bits
+        $realCore  = $this->coreDomain($realDomain);
+        $realBase  = $this->secondLevelLabel($realDomain);
+        $exactLike = ($realBase === $brand);
+        $contains  = str_contains($realBase, $brand);
 
-        // If the domain label equals the brand exactly (e.g., paypal.com), don't flag
         if ($exactLike) return null;
 
-        // Look‑alike: brand is embedded but with extra prefix/suffix/hyphen etc.
         if ($contains) {
             return [
                 'id'       => 'H-1-lookalike-domain',
                 'severity' => 'medium',
                 'score'    => 18,
                 'message'  => "Sender domain looks like the brand '{$brand}' (domain: {$realCore}).",
-                'evidence' => [
-                    'from'       => $from,
-                    'display'    => $display,
-                    'brand'      => $brand,
-                    'realDomain' => $realDomain,
-                    'realCore'   => $realCore,
-                    'realBase'   => $realBase,
-                ],
+                'evidence' => compact('from','display','brand','realDomain','realCore','realBase'),
             ];
         }
 
-        // Pure mismatch: display hints a brand not reflected in the domain
         return [
             'id'       => 'H-1-domain-mismatch',
             'severity' => 'medium',
             'score'    => 15,
             'message'  => "Display/brand suggests '{$brand}' but real sender domain is {$realCore}.",
-            'evidence' => [
-                'from'       => $from,
-                'display'    => $display,
-                'brand'      => $brand,
-                'realDomain' => $realDomain,
-                'realCore'   => $realCore,
-                'realBase'   => $realBase,
-            ],
+            'evidence' => compact('from','display','brand','realDomain','realCore','realBase'),
         ];
     }
 
@@ -692,7 +685,6 @@ class ScanController extends Controller
         foreach (preg_split('/\s+/', trim($t)) as $w) {
             if ($w !== '' && in_array($w, $known, true)) return $w;
         }
-        // also detect plain domains like paypal.com -> paypal
         if (preg_match('/^([a-z0-9-]+)\.(?:com|net|org|co|io|me)$/i', trim($token), $m)) {
             $w = strtolower($m[1]);
             if (in_array($w, $known, true)) return $w;
@@ -708,7 +700,6 @@ class ScanController extends Controller
         $d = trim(preg_replace('/\s+/', ' ', $d));
         if ($d === '') return null;
 
-        // known brand-ish words (extend as needed)
         $brands = [
             'paypal','apple','microsoft','amazon','google','bank','netflix','facebook','instagram',
             'dhl','ups','stripe','billing','support','service','security'
@@ -726,7 +717,6 @@ class ScanController extends Controller
         $host = strtolower($domain);
         $labels = explode('.', $host);
         if (count($labels) < 2) return $host;
-        // handle a few common multi-label TLDs
         $mlt = ['co.uk','ac.uk','gov.uk','co.jp','com.au','com.br','com.ar'];
         $lastTwo   = implode('.', array_slice($labels, -2));
         $lastThree = implode('.', array_slice($labels, -3));
@@ -736,7 +726,6 @@ class ScanController extends Controller
         if (in_array($lastTwo, $mlt, true)) {
             return $labels[count($labels)-3] ?? $labels[count($labels)-2];
         }
-        // normal case: take the label before TLD
         return $labels[count($labels)-2];
     }
 
@@ -755,7 +744,7 @@ class ScanController extends Controller
             'dhl'        => ['dhl.com','dhl.de'],
             'ups'        => ['ups.com'],
             'stripe'     => ['stripe.com'],
-            'bank'       => [], // generic – no allowlist
+            'bank'       => [],
         ];
         return $map[$brand] ?? [];
     }
@@ -779,5 +768,76 @@ class ScanController extends Controller
             return $this->trimEvidence($arr, $maxLen, $maxItems);
         }
         return $evidence;
+    }
+
+    /* -------- 6.3 helpers: verdict & justification -------- */
+
+    private function chooseVerdict(int $score, array $findings): string
+    {
+        $base = $score >= 50 ? 'likely_phishing'
+               : ($score >= 20 ? 'suspicious' : 'likely_legitimate');
+
+        // Safety net: if H-1 mismatch present, ensure at least "suspicious"
+        $hasMismatch = false;
+        foreach ($findings as $f) {
+            $id = strtolower($f['id'] ?? '');
+            if ($id === 'h-1-domain-mismatch' || $id === 'h-1-lookalike-domain') {
+                $hasMismatch = true; break;
+            }
+        }
+        if ($base === 'likely_legitimate' && $hasMismatch) return 'suspicious';
+
+        return $base;
+    }
+
+    private function buildJustification(string $verdict, array $findings): string
+    {
+        if (empty($findings)) {
+            return $verdict === 'likely_legitimate'
+                ? 'No significant phishing indicators detected.'
+                : '';
+        }
+
+        // Sort by severity (high > medium > low) then by per-rule score desc
+        $sevRank = ['high' => 3, 'medium' => 2, 'low' => 1];
+        usort($findings, function ($a, $b) use ($sevRank) {
+            $ra = $sevRank[strtolower($a['severity'] ?? 'low')] ?? 1;
+            $rb = $sevRank[strtolower($b['severity'] ?? 'low')] ?? 1;
+            if ($ra !== $rb) return $rb <=> $ra;
+            return (int)($b['score'] ?? 0) <=> (int)($a['score'] ?? 0);
+        });
+
+        $labels = [
+            'H-1-domain-mismatch'       => 'domain mismatch',
+            'H-1-lookalike-domain'      => 'look‑alike sender domain',
+            'H-2-urgency'               => 'urgency keywords',
+            'H-3-replyto-mismatch'      => 'Reply‑To differs',
+            'H-4-links-off-brand'       => 'links off‑brand',
+            'H-5-freemail-claims-brand' => 'brand‑like name on freemail',
+            'H-6-weak-auth'             => 'weak SPF/DMARC',
+            'H-7-suspicious-tld'        => 'suspicious TLD',
+            'H-8-punycode'              => 'punycode/homoglyph',
+        ];
+
+        $reasons = [];
+        foreach ($findings as $f) {
+            $id = $f['id'] ?? '';
+            if (isset($labels[$id])) $reasons[] = $labels[$id];
+            if (count($reasons) >= 3) break;
+        }
+        $reasons = array_values(array_unique($reasons));
+
+        if (empty($reasons)) {
+            return $verdict === 'likely_legitimate'
+                ? 'No significant phishing indicators detected.'
+                : '';
+        }
+
+        $list = implode(', ', $reasons);
+        return match ($verdict) {
+            'likely_phishing'  => "Probable phishing: $list.",
+            'suspicious'       => "Suspicious: $list.",
+            default            => 'No significant phishing indicators detected.'
+        };
     }
 }
