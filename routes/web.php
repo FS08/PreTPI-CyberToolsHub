@@ -2,12 +2,13 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\ScanController; // controller for scan + history + details
-use App\Http\Controllers\UrlscanController; // <-- new dev controller
+use App\Http\Controllers\ScanController;
+use App\Http\Controllers\UrlscanController;
+use App\Http\Controllers\StatsController; // <-- add this
 
 // ---------- Public pages ----------
-Route::view('/', 'home')->name('home');          // serves resources/views/home.blade.php
-Route::view('/about', 'about')->name('about');   // serves resources/views/about.blade.php
+Route::view('/', 'home')->name('home');
+Route::view('/about', 'about')->name('about');
 
 // ---------- Dashboard (Breeze redirect after registration) ----------
 Route::view('/dashboard', 'dashboard')
@@ -17,19 +18,19 @@ Route::view('/dashboard', 'dashboard')
 // ---------- Private pages (login + verified email required) ----------
 Route::middleware(['auth', 'verified'])->group(function () {
     // Scan page (form)
-    Route::view('/scan', 'create')->name('scan.create'); // resources/views/create.blade.php
+    Route::view('/scan', 'create')->name('scan.create');
 
     // Upload handler (validation + parse + persist)
     Route::post('/scan', [ScanController::class, 'store'])->name('scan.store');
 
-    // History list (controller for pagination)
+    // History list (pagination + filters)
     Route::get('/history', [ScanController::class, 'history'])->name('scan.history');
 
-    // NEW: Scan details page (owner-only)
+    // Scan details (owner-only)
     Route::get('/history/{scan}', [ScanController::class, 'show'])->name('scan.show');
 
-    // Stats (placeholder view for now)
-    Route::view('/stats', 'stats')->name('stats'); // resources/views/stats.blade.php
+    // Stats (computed via controller; returns resources/views/stats.blade.php)
+    Route::get('/stats', [StatsController::class, 'index'])->name('stats');
 
     // ---------- Dev: temporary page for Urlscan.io testing ----------
     Route::get('/dev/urlscan', [UrlscanController::class, 'index'])->name('dev.urlscan.index');
