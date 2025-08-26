@@ -12,6 +12,7 @@ use ZBateson\MailMimeParser\Message;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
 
 class ScanController extends Controller
 {
@@ -160,6 +161,9 @@ class ScanController extends Controller
             'dmarc_json'        => $dmarc,
             'heuristics_json'   => $heuristics,
         ]);
+
+        // Invalidate per-user stats cache so Stats page refreshes
+        $this->invalidateStatsCache(Auth::id());
 
         // 14) Submit URLs to urlscan.io (non‑blocking)
         $submitted  = [];
@@ -719,6 +723,33 @@ class ScanController extends Controller
                 'evidence'=>['domains'=>$puny]];
         }
         return null;
+    }
+
+    /* ------------------------ cache invalidation ------------------------ */
+
+    /**
+     * Invalidate per-user stats caches.
+     */
+    private function invalidateStatsCache(int $userId): void
+    {
+        try {
+            if (Cache::getStore() instanceof \Illuminate\Cache\TaggableStore) {
+                Cache::tags(["stats:user:$userId"])->flush();
+                return;
+            }
+
+            // Fallback for non-taggable stores (file, array, etc.)
+            foreach ([
+                "stats:totals:$userId",
+                "stats:trend:$userId:days:7",
+                "stats:trend:$userId:days:14",
+                "stats:trend:$userId:days:30",
+            ] as $k) {
+                Cache::forget($k);
+            }
+        } catch (\Throwable $e) {
+            // \Log::warning("Stats cache invalidate failed: ".$e->getMessage());
+        }
     }
 
     /* --- tiny helpers for heuristics --- */

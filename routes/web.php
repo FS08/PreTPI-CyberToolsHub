@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ScanController;
 use App\Http\Controllers\UrlscanController;
-use App\Http\Controllers\StatsController; // <-- add this
+use App\Http\Controllers\StatsController;
 
 // ---------- Public pages ----------
 Route::view('/', 'home')->name('home');
@@ -29,8 +29,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // Scan details (owner-only)
     Route::get('/history/{scan}', [ScanController::class, 'show'])->name('scan.show');
 
-    // Stats (computed via controller; returns resources/views/stats.blade.php)
+    // Stats (page + data for charts)
     Route::get('/stats', [StatsController::class, 'index'])->name('stats');
+    Route::get('/stats/data', [StatsController::class, 'data'])->name('stats.data');
 
     // ---------- Dev: temporary page for Urlscan.io testing ----------
     Route::get('/dev/urlscan', [UrlscanController::class, 'index'])->name('dev.urlscan.index');
