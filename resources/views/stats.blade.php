@@ -4,24 +4,29 @@
     <h2 class="font-semibold text-xl">Stats</h2>
   </x-slot>
 
+  <style>
+    /* Extra spacing between KPI cards (in addition to Tailwind's gap) */
+    .kpi-card { margin-bottom: .75rem; } /* 12px */
+  </style>
+
   <div class="p-6">
     <div class="max-w-4xl mx-auto bg-white shadow rounded-xl p-6 space-y-6 dark:bg-gray-800 dark:text-gray-100">
 
       {{-- KPIs --}}
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700 kpi-card">
           <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total analyses</div>
           <div class="mt-1 text-2xl font-bold" id="kpi-total">{{ number_format($total) }}</div>
         </div>
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700 kpi-card">
           <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Likely phishing</div>
           <div class="mt-1 text-2xl font-bold text-red-600 dark:text-red-400" id="kpi-phishing">{{ number_format($phishing) }}</div>
         </div>
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700 kpi-card">
           <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Suspicious</div>
           <div class="mt-1 text-2xl font-bold text-amber-600 dark:text-amber-400" id="kpi-suspicious">{{ number_format($suspicious) }}</div>
         </div>
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700 kpi-card">
           <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Likely legitimate</div>
           <div class="mt-1 text-2xl font-bold text-green-600 dark:text-green-400" id="kpi-legit">{{ number_format($legit) }}</div>
         </div>
@@ -41,7 +46,9 @@
                    style="width: {{ $rate }}%; background-color: {{ $rate >= 50 ? '#dc2626' : ($rate >= 20 ? '#d97706' : '#16a34a') }};">
               </div>
             </div>
-            <div class="mt-1 text-xs text-right text-gray-500 dark:text-gray-400"><span id="rate-pill">{{ $rate }}</span>%</div>
+            <div class="mt-1 text-xs text-right text-gray-500 dark:text-gray-400">
+              <span id="rate-pill">{{ $rate }}</span>%
+            </div>
           </div>
         </div>
       </div>
@@ -66,7 +73,9 @@
         <div class="flex w-full items-center gap-10">
           {{-- Chart --}}
           <div class="flex-1">
-            <canvas id="trendChart" height="120"></canvas>
+            <div class="relative h-[140px]">
+              <canvas id="trendChart"></canvas>
+            </div>
           </div>
 
           {{-- Table on the right --}}
@@ -101,7 +110,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script>
-    // Initial data from PHP (server-rendered 7-day)
+    // Initial server-rendered series (Total scans)
     const phpLabels = {!! json_encode(collect($trend)->pluck('date')->map(fn($d) => \Carbon\Carbon::parse($d)->format('M d'))) !!};
     const phpData   = {!! json_encode(collect($trend)->pluck('count')) !!};
 
@@ -110,21 +119,60 @@
       type: 'line',
       data: {
         labels: phpLabels,
-        datasets: [{
-          label: 'Scans',
-          data: phpData,
-          borderColor: '#2563EB',
-          backgroundColor: 'rgba(37, 99, 235, 0.2)',
-          borderWidth: 2,
-          pointRadius: 3,
-          pointBackgroundColor: '#2563EB',
-          tension: 0.3
-        }]
+        datasets: [
+          {
+            label: 'Total Scans',
+            data: phpData,
+            borderColor: '#2563EB',
+            backgroundColor: 'rgba(37, 99, 235, 0.18)',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            pointBackgroundColor: '#2563EB',
+            fill: true,
+            tension: 0.3
+          },
+          {
+            label: 'Likely Phishing',
+            data: [], // will be filled after fetch
+            borderColor: '#DC2626',
+            backgroundColor: 'rgba(220, 38, 38, 0.18)',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            pointBackgroundColor: '#DC2626',
+            fill: true,
+            tension: 0.3
+          }
+        ]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        plugins: {
+          legend: { display: true },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            callbacks: {
+              // Show "Dataset: value" and a quick ratio when both datasets exist
+              label: (ctx) => `${ctx.dataset.label}: ${ctx.formattedValue}`,
+              afterBody: (items) => {
+                if (items.length < 2) return '';
+                try {
+                  const total = items.find(i => i.dataset.label === 'Total Scans')?.parsed.y ?? null;
+                  const phish = items.find(i => i.dataset.label === 'Likely Phishing')?.parsed.y ?? null;
+                  if (total && phish !== null) {
+                    const pct = total > 0 ? ((phish / total) * 100).toFixed(1) : '0.0';
+                    return `Phishing share: ${pct}%`;
+                  }
+                } catch (_e) {}
+                return '';
+              }
+            }
+          }
+        },
         scales: {
           x: { grid: { display: false } },
           y: { beginAtZero: true, ticks: { precision: 0 } }
@@ -135,53 +183,67 @@
     const routeStatsData = "{{ route('stats.data') }}";
 
     async function loadTrend(days) {
-      const res = await fetch(`${routeStatsData}?days=${days}`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      const res = await fetch(`${routeStatsData}?days=${days}`, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
       if (!res.ok) return;
       const json = await res.json();
       if (!json.ok) return;
 
-      // Update title label
+      // Range label
       document.getElementById('range-label').textContent = days;
 
-      // Update chart
-      trendChart.data.labels = json.labels;
-      trendChart.data.datasets[0].data = json.data;
+      // Chart labels + both datasets
+      if (Array.isArray(json.labels)) {
+        trendChart.data.labels = json.labels;
+      }
+      if (Array.isArray(json.data)) {
+        trendChart.data.datasets[0].data = json.data;
+      }
+      if (Array.isArray(json.dataPhish)) {
+        trendChart.data.datasets[1].data = json.dataPhish;
+      }
       trendChart.update();
 
-      // Update table (right)
-      const tbody = document.querySelector('#trendTable tbody');
-      tbody.innerHTML = '';
-      json.trend.forEach(row => {
-        const tr = document.createElement('tr');
-        tr.className = 'border-t border-gray-100 dark:border-gray-700';
-        const tdDate = document.createElement('td');
-        tdDate.className = 'py-1 pr-4';
-        tdDate.textContent = row.date;
-        const tdCount = document.createElement('td');
-        tdCount.className = 'py-1 text-center font-medium';
-        tdCount.textContent = row.count;
-        tr.appendChild(tdDate);
-        tr.appendChild(tdCount);
-        tbody.appendChild(tr);
-      });
+      // Table (if backend returns day-level array)
+      if (Array.isArray(json.trend)) {
+        const tbody = document.querySelector('#trendTable tbody');
+        tbody.innerHTML = '';
+        json.trend.forEach(row => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-t border-gray-100 dark:border-gray-700';
+          tr.innerHTML = `<td class="py-1 pr-4">${row.date}</td>
+                          <td class="py-1 text-center font-medium">${row.count}</td>`;
+          tbody.appendChild(tr);
+        });
+      }
 
-      // Update KPIs (overall, from server totals)
-      document.getElementById('kpi-total').textContent      = new Intl.NumberFormat().format(json.totals.total);
-      document.getElementById('kpi-phishing').textContent   = new Intl.NumberFormat().format(json.totals.phishing);
-      document.getElementById('kpi-suspicious').textContent = new Intl.NumberFormat().format(json.totals.suspicious);
-      document.getElementById('kpi-legit').textContent      = new Intl.NumberFormat().format(json.totals.legit);
+      // KPIs (tolerant if fields are missing)
+      if (json.totals) {
+        if (json.totals.total !== undefined)
+          document.getElementById('kpi-total').textContent = new Intl.NumberFormat().format(json.totals.total);
+        if (json.totals.phishing !== undefined)
+          document.getElementById('kpi-phishing').textContent = new Intl.NumberFormat().format(json.totals.phishing);
+        if (json.totals.suspicious !== undefined)
+          document.getElementById('kpi-suspicious').textContent = new Intl.NumberFormat().format(json.totals.suspicious);
+        if (json.totals.legit !== undefined)
+          document.getElementById('kpi-legit').textContent = new Intl.NumberFormat().format(json.totals.legit);
 
-      // Rate number + pill + bar color/width
-      const rate = json.totals.phishRate ?? 0;
-      document.getElementById('kpi-rate').textContent = rate.toFixed(1);
-      document.getElementById('rate-pill').textContent = Math.max(0, Math.min(100, rate)).toFixed(0);
-      const bar = document.getElementById('rate-bar');
-      bar.style.width = `${Math.max(0, Math.min(100, rate))}%`;
-      bar.style.backgroundColor = rate >= 50 ? '#dc2626' : (rate >= 20 ? '#d97706' : '#16a34a');
+        if (json.totals.phishRate !== undefined) {
+          const rate = json.totals.phishRate ?? 0;
+          document.getElementById('kpi-rate').textContent = rate.toFixed(1);
+          document.getElementById('rate-pill').textContent = Math.max(0, Math.min(100, rate)).toFixed(0);
+          const bar = document.getElementById('rate-bar');
+          bar.style.width = `${Math.max(0, Math.min(100, rate))}%`;
+          bar.style.backgroundColor = rate >= 50 ? '#dc2626' : (rate >= 20 ? '#d97706' : '#16a34a');
+        }
+      }
     }
 
-    // Hook the selector
+    // Initial fetch to populate the Phishing dataset as well
     const sel = document.getElementById('trendDays');
     sel.addEventListener('change', (e) => loadTrend(e.target.value));
+    // Kick once for the default (7)
+    loadTrend(sel.value);
   </script>
 </x-app-layout>
