@@ -165,7 +165,7 @@ class ScanController extends Controller
         // Invalidate per-user stats cache so Stats page refreshes
         $this->invalidateStatsCache(Auth::id());
 
-        // 14) Submit URLs to urlscan.io (non‑blocking)
+        // 14) Submit URLs to urlscan.io (non-blocking)
         $submitted  = [];
         $enabled    = (bool) config('urlscan.enabled', true);
         $maxPerScan = (int)  config('urlscan.max_per_scan', 5);
@@ -203,7 +203,7 @@ class ScanController extends Controller
         }
 
         return back()
-            ->with('ok', 'File parsed, saved, SPF/DMARC checked, heuristics computed, and URLs submitted (non‑blocking).')
+            ->with('ok', 'File parsed, saved, SPF/DMARC checked, heuristics computed, and URLs submitted (non-blocking).')
             ->with('results', $results)
             ->with('scanId', $scan->id)
             ->with('urlscanSubmitted', $submitted);
@@ -219,7 +219,7 @@ class ScanController extends Controller
         $risk       = strtolower((string) $request->input('risk', ''));    // '', low, medium, high
         $scoreMin   = $request->filled('score_min') ? (int) $request->input('score_min') : null;
         $scoreMax   = $request->filled('score_max') ? (int) $request->input('score_max') : null;
-        $sort       = (string) $request->input('sort', 'date_desc');       // date_desc|date_asc|score_desc|score_asc
+        $sort       = (string) $request->input('sort', 'date_desc');       // date_desc|date_asc|score_desc|score_asc|subject_asc|subject_desc|from_asc|from_desc|risk_asc|risk_desc
 
         $hasScoreCol = Schema::hasColumn('scans', 'heuristics_score');
 
@@ -227,6 +227,11 @@ class ScanController extends Controller
         $scoreExpr = $hasScoreCol
             ? DB::raw('heuristics_score')
             : DB::raw("CAST(JSON_EXTRACT(heuristics_json, '$.score') AS UNSIGNED)");
+
+        // Also build a raw SQL string for orderByRaw (used by risk sorting)
+        $scoreSql = $hasScoreCol
+            ? 'heuristics_score'
+            : "CAST(JSON_EXTRACT(heuristics_json, '$.score') AS UNSIGNED)";
 
         // Base scope: current user (uncomment orWhereNull if you want legacy rows too)
         $query = Scan::query()
@@ -268,7 +273,7 @@ class ScanController extends Controller
         if ($scoreMin !== null) $query->where($scoreExpr, '>=', $scoreMin);
         if ($scoreMax !== null) $query->where($scoreExpr, '<=', $scoreMax);
 
-        // Sorting (use created_at for date)
+        // Sorting (extended with new fields)
         switch ($sort) {
             case 'date_asc':
                 $query->orderBy('created_at', 'asc');
@@ -279,13 +284,55 @@ class ScanController extends Controller
             case 'score_asc':
                 $query->orderBy($scoreExpr, 'asc')->orderBy('created_at', 'desc');
                 break;
+            case 'subject_asc':
+                $query->orderBy('subject', 'asc')->orderBy('created_at', 'desc');
+                break;
+            case 'subject_desc':
+                $query->orderBy('subject', 'desc')->orderBy('created_at', 'desc');
+                break;
+            case 'from_asc':
+                $query->orderBy('from', 'asc')->orderBy('created_at', 'desc');
+                break;
+            case 'from_desc':
+                $query->orderBy('from', 'desc')->orderBy('created_at', 'desc');
+                break;
+
+            // Risk sort maps score to Low(1) < Medium(2) < High(3)
+            case 'risk_asc':
+                $query->orderByRaw("
+                    CASE
+                      WHEN {$scoreSql} >= 50 THEN 3
+                      WHEN {$scoreSql} BETWEEN 20 AND 49 THEN 2
+                      ELSE 1
+                    END ASC, created_at DESC
+                ");
+                break;
+
+            case 'risk_desc':
+                $query->orderByRaw("
+                    CASE
+                      WHEN {$scoreSql} >= 50 THEN 3
+                      WHEN {$scoreSql} BETWEEN 20 AND 49 THEN 2
+                      ELSE 1
+                    END DESC, created_at DESC
+                ");
+                break;
+
             default: // date_desc
                 $query->orderBy('created_at', 'desc');
                 break;
         }
 
+        // Paginate + preserve query string
         $scans = $query->paginate(10)->withQueryString();
 
+        // If AJAX: return only the table partial
+        if ($request->ajax()) {
+            $html = view('history._table', compact('scans'))->render();
+            return response()->json(['ok' => true, 'html' => $html]);
+        }
+
+        // Normal full-page render
         return view('history', [
             'scans' => $scans,
             'filters' => [
@@ -299,6 +346,16 @@ class ScanController extends Controller
                 'sort' => $sort,
             ],
         ]);
+    }
+
+    /**
+     * Optional: a named endpoint that returns the same partial.
+     * You can use this if you prefer a dedicated URL over relying on AJAX detection.
+     */
+    public function historyPartial(Request $request)
+    {
+        // Reuse the same logic above by delegating to history()
+        return $this->history($request);
     }
 
     public function show(Scan $scan)
@@ -494,7 +551,7 @@ class ScanController extends Controller
         return compact('record','policy','subPol','rua','ruf','pct','fo','adkim','aspf');
     }
 
-    /* ======================== Heuristics (H‑1 … H‑8) + 6.2 + 6.3 ======================== */
+    /* ======================== Heuristics (H-1 … H-8) + 6.2 + 6.3 ======================== */
 
     private function evaluateHeuristics(array $c): array
     {
@@ -543,7 +600,7 @@ class ScanController extends Controller
         ];
     }
 
-    /** H‑1: Brand token in display vs official sender domains */
+    /** H-1: Brand token in display vs official sender domains */
     private function h1DisplayVsRealDomain(array $c): ?array
     {
         $from       = (string)($c['from'] ?? '');
@@ -928,11 +985,11 @@ class ScanController extends Controller
 
         $labels = [
             'H-1-domain-mismatch'       => 'domain mismatch',
-            'H-1-lookalike-domain'      => 'look‑alike sender domain',
+            'H-1-lookalike-domain'      => 'look-alike sender domain',
             'H-2-urgency'               => 'urgency keywords',
-            'H-3-replyto-mismatch'      => 'Reply‑To differs',
-            'H-4-links-off-brand'       => 'links off‑brand',
-            'H-5-freemail-claims-brand' => 'brand‑like name on freemail',
+            'H-3-replyto-mismatch'      => 'Reply-To differs',
+            'H-4-links-off-brand'       => 'links off-brand',
+            'H-5-freemail-claims-brand' => 'brand-like name on freemail',
             'H-6-weak-auth'             => 'weak SPF/DMARC',
             'H-7-suspicious-tld'        => 'suspicious TLD',
             'H-8-punycode'              => 'punycode/homoglyph',

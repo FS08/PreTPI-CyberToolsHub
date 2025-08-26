@@ -25,6 +25,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // History list (pagination + filters)
     Route::get('/history', [ScanController::class, 'history'])->name('scan.history');
+    // Ajax/partial endpoint that returns only the table block
+    Route::get('/history/partial', [ScanController::class, 'historyPartial'])->name('scan.history.partial');
 
     // Scan details (owner-only)
     Route::get('/history/{scan}', [ScanController::class, 'show'])->name('scan.show');
@@ -39,7 +41,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/dev/urlscan/submit', [UrlscanController::class, 'submit'])->name('dev.urlscan.submit');
 });
 
-// ---------- Breeze profile pages (login required) ----------
+// ---------- Profile / Account management (built-in with Breeze) ----------
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');

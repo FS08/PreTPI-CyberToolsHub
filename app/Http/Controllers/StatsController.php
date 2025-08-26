@@ -79,76 +79,78 @@ class StatsController extends Controller
      */
     public function data(Request $request)
     {
-        $userId      = Auth::id();
+        $userId = Auth::id();
         $hasScoreCol = Schema::hasColumn('scans', 'heuristics_score');
 
-        // ---- Parse range ----
-        $fromParam = $request->query('from');
-        $toParam   = $request->query('to');
+        $days = (int) $request->query('days', 7);
+        $days = max(1, min(90, $days));
 
-        if ($fromParam && $toParam) {
-            try {
-                $from = Carbon::parse($fromParam)->startOfDay();
-                $to   = Carbon::parse($toParam)->endOfDay();
-            } catch (\Throwable) {
-                return response()->json(['ok' => false, 'error' => 'Invalid date format. Use YYYY-MM-DD.'], 422);
-            }
-            if ($from->gt($to)) {
-                [$from, $to] = [$to, $from];
-            }
-            $days = $from->diffInDays($to) + 1;
-            // No caching for arbitrary ranges
-            $trend = $this->buildTrend($userId, $from, $to);
+        $to   = \Carbon\Carbon::today()->endOfDay();
+        $from = \Carbon\Carbon::today()->subDays($days - 1)->startOfDay();
+
+        // Overall totals
+        $total = Scan::where('user_id', $userId)->count();
+
+        if ($hasScoreCol) {
+            $phishing = Scan::where('user_id', $userId)->where('heuristics_score', '>=', 50)->count();
         } else {
-            // days-based range (cached for 7/14/30)
-            $days = (int) $request->integer('days', 7);
-            if (!in_array($days, [7, 14, 30], true)) $days = 7;
-
-            $to   = Carbon::today()->endOfDay();
-            $from = Carbon::today()->subDays($days - 1)->startOfDay();
-
-            $trendKey = "stats:trend:$userId:days:$days";
-            $trend = Cache::remember($trendKey, now()->addMinutes(10), function () use ($userId, $from, $to) {
-                return $this->buildTrend($userId, $from, $to);
-            });
+            $jq = "CAST(JSON_EXTRACT(heuristics_json, '$.score') AS UNSIGNED)";
+            $phishing = Scan::where('user_id', $userId)->whereRaw("$jq >= 50")->count();
         }
 
-        // ---- Totals (overall; cached) ----
-        $totalsKey = "stats:totals:$userId";
-        $totals = Cache::remember($totalsKey, now()->addMinutes(10), function () use ($userId, $hasScoreCol) {
-            $total = Scan::where('user_id', $userId)->count();
+        $phishRate = $total > 0 ? round(($phishing / $total) * 100, 1) : 0.0;
 
-            if ($hasScoreCol) {
-                $phishing   = Scan::where('user_id', $userId)->where('heuristics_score', '>=', 50)->count();
-                $suspicious = Scan::where('user_id', $userId)->whereBetween('heuristics_score', [20, 49])->count();
-                $legit      = Scan::where('user_id', $userId)->where('heuristics_score', '<', 20)->count();
-            } else {
-                $jq = "CAST(JSON_EXTRACT(heuristics_json, '$.score') AS UNSIGNED)";
-                $phishing   = Scan::where('user_id', $userId)->whereRaw("$jq >= 50")->count();
-                $suspicious = Scan::where('user_id', $userId)->whereRaw("$jq BETWEEN 20 AND 49")->count();
-                $legit      = Scan::where('user_id', $userId)->whereRaw("$jq < 20")->count();
-            }
+        // Per-day stats
+        if ($hasScoreCol) {
+            $rows = Scan::selectRaw("
+                    DATE(created_at) as d,
+                    COUNT(*) as total_c,
+                    SUM(CASE WHEN heuristics_score >= 50 THEN 1 ELSE 0 END) as phish_c
+                ")
+                ->where('user_id', $userId)
+                ->whereBetween('created_at', [$from, $to])
+                ->groupBy('d')
+                ->orderBy('d')
+                ->get()
+                ->keyBy('d');
+        } else {
+            $jq = "CAST(JSON_EXTRACT(heuristics_json, '$.score') AS UNSIGNED)";
+            $rows = Scan::selectRaw("
+                    DATE(created_at) as d,
+                    COUNT(*) as total_c,
+                    SUM(CASE WHEN $jq >= 50 THEN 1 ELSE 0 END) as phish_c
+                ")
+                ->where('user_id', $userId)
+                ->whereBetween('created_at', [$from, $to])
+                ->groupBy('d')
+                ->orderBy('d')
+                ->get()
+                ->keyBy('d');
+        }
 
-            $phishRate = $total > 0 ? round(($phishing / $total) * 100, 1) : 0.0;
+        $labels    = [];
+        $dataTotal = [];
+        $dataPhish = [];
 
-            return compact('total', 'phishing', 'suspicious', 'legit', 'phishRate');
-        });
-
-        // Labels for Chart.js (pretty)
-        $labels = collect($trend)->pluck('date')->map(fn($d) => Carbon::parse($d)->format('M d'))->values();
-        $counts = collect($trend)->pluck('count')->values();
+        $cursor = $from->copy();
+        while ($cursor->lte($to)) {
+            $day = $cursor->toDateString();
+            $labels[]    = $cursor->format('M d');
+            $dataTotal[] = (int) ($rows[$day]->total_c ?? 0);
+            $dataPhish[] = (int) ($rows[$day]->phish_c ?? 0);
+            $cursor->addDay();
+        }
 
         return response()->json([
             'ok'     => true,
-            'days'   => $days,
-            'range'  => [
-                'from' => $from->toDateString(),
-                'to'   => $to->toDateString(),
-            ],
             'labels' => $labels,
-            'data'   => $counts,
-            'trend'  => $trend,   // raw [{date, count}]
-            'totals' => $totals,  // overall KPIs
+            'data'   => $dataTotal,
+            'dataPhish' => $dataPhish,
+            'totals' => [
+                'total'     => $total,
+                'phishing'  => $phishing,
+                'phishRate' => $phishRate,
+            ],
         ]);
     }
 
