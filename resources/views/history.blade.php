@@ -1,7 +1,7 @@
 {{-- resources/views/history.blade.php --}}
 <x-app-layout>
   <x-slot name="header">
-    <h2 class="font-semibold text-xl">History</h2>
+    <h2 class="font-semibold text-xl text-white"><span class="text-indigo-600 dark:text-indigo-400">History</span></h2>
   </x-slot>
 
   <style>

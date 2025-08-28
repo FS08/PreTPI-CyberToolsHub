@@ -1,7 +1,7 @@
 {{-- resources/views/stats.blade.php --}}
 <x-app-layout>
   <x-slot name="header">
-    <h2 class="font-semibold text-xl">Stats</h2>
+    <h2 class="font-semibold text-xl text-white"><span class="text-indigo-600 dark:text-indigo-400">Stats</span></h2>
   </x-slot>
 
   <style>

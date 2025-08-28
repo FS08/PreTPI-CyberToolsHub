@@ -1,12 +1,12 @@
 {{-- Protected "Scan" page (app layout) --}}
 <x-app-layout>
   <x-slot name="header">
-    <h2 class="font-semibold text-xl">Scan</h2>
+    <h2 class="font-semibold text-xl text-white"><span class="text-indigo-600 dark:text-indigo-400">Scan</span></h2>
   </x-slot>
 
   <div class="p-6">
     <div class="max-w-3xl mx-auto bg-white shadow rounded-xl p-6 space-y-6 dark:bg-gray-800 dark:text-gray-100">
-      
+
       {{-- Upload form --}}
       <form method="POST" action="{{ route('scan.store') }}" enctype="multipart/form-data" class="space-y-4">
         @csrf
@@ -14,7 +14,7 @@
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
             Upload .eml file
           </label>
-          <input type="file" name="eml" accept=".eml" required 
+          <input type="file" name="eml" accept=".eml" required
                  class="block w-full border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-300">
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Max 15MB, MIME: message/rfc822</p>
           @error('eml')

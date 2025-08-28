@@ -5,18 +5,17 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ScanController;
 use App\Http\Controllers\UrlscanController;
 use App\Http\Controllers\StatsController;
+use App\Http\Controllers\DashboardController;
 
 // ---------- Public pages ----------
 Route::view('/', 'home')->name('home');
 Route::view('/about', 'about')->name('about');
 
-// ---------- Dashboard (Breeze redirect after registration) ----------
-Route::view('/dashboard', 'dashboard')
-    ->middleware(['auth', 'verified'])
-    ->name('dashboard');
-
 // ---------- Private pages (login + verified email required) ----------
 Route::middleware(['auth', 'verified'])->group(function () {
+    // Dashboard (main landing page after login/registration)
+    Route::get('/dashboard', DashboardController::class)->name('dashboard');
+
     // Scan page (form)
     Route::view('/scan', 'create')->name('scan.create');
 

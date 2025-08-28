@@ -18,17 +18,17 @@
         @vite(['resources/css/app.css', 'resources/js/app.js'])
     </head>
     <body class="font-sans text-gray-900 antialiased">
-        <div class="min-h-screen flex flex-col sm:justify-center items-center pt-6 sm:pt-0 bg-gray-100">
+            <div class="min-h-screen flex flex-col sm:justify-center items-center pt-6 sm:pt-0 bg-gradient-to-b from-indigo-50 to-white dark:from-gray-900 dark:to-gray-800">
             <div>
                 <a href="/">
                     {{-- Smaller logo with rounded corners --}}
-                    <img src="{{ asset('cth_logo2.png') }}" 
-                         alt="Cyber Tools Hub" 
-                         class="w-24 h-auto rounded-lg shadow-sm">
+                    <img src="{{ asset('cth_logo.png') }}"
+                         alt="Cyber Tools Hub"
+                         class="w-38 h-auto rounded-lg shadow-sm border-4 border-white">
                 </a>
             </div>
 
-            <div class="w-full sm:max-w-md mt-6 px-6 py-4 bg-white shadow-md overflow-hidden sm:rounded-lg">
+            <div class="w-full sm:max-w-md mt-6 rounded-xl bg-white border p-6 dark:bg-gray-800 dark:border-gray-700 space-y-3">
                 {{ $slot }}
             </div>
         </div>
