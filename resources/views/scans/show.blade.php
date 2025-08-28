@@ -2,7 +2,7 @@
 <x-app-layout>
   <x-slot name="header">
     <div class="flex justify-between items-center">
-      <h2 class="font-semibold text-xl">Scan Details</h2>
+      <h2 class="font-semibold text-xl text-white"><span class="text-indigo-600 dark:text-indigo-400">Scan Details</span></h2>
       <a href="{{ route('scan.history') }}"
          class="inline-flex items-center px-4 py-2 bg-gray-800 text-white text-sm font-medium
                 rounded-lg shadow hover:bg-gray-900 focus:outline-none focus:ring-2
