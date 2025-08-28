@@ -1,61 +1,193 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+<p align="center">
+  <img src="public/favicon.svg" alt="CyberToolsHub Logo" width="120"/>
+</p>
+<h1 align="center">CyberToolsHub</h1>
+<p align="center"><em>Pré TPI 2025 — A modern cybersecurity tools hub built with Laravel</em></p>
 
 <p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
+  <a href="https://github.com/FS08/PreTPI-CyberToolsHub/actions"><img src="https://img.shields.io/github/actions/workflow/status/FS08/PreTPI-CyberToolsHub/main.yml?branch=main" alt="Build Status"/></a>
+  <img src="https://img.shields.io/badge/Laravel-FF2D20?logo=laravel&logoColor=white" alt="Laravel"/>
+  <img src="https://img.shields.io/badge/PHP-777BB4?logo=php&logoColor=white" alt="PHP"/>
+  <img src="https://img.shields.io/badge/Tailwind_CSS-38B2AC?logo=tailwind-css&logoColor=white" alt="TailwindCSS"/>
+  <img src="https://img.shields.io/badge/Alpine.js-8BC0D0?logo=javascript&logoColor=black" alt="Alpine.js"/>
+  <img src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white" alt="Vite"/>
 </p>
 
-## About Laravel
+<p align="center">
+  A modern <strong>cybersecurity tools hub</strong> built with Laravel, Tailwind CSS, and Alpine.js.<br/>
+  This project is part of my <strong>Pré TPI 2025</strong> and aims to centralize, experiment with, and showcase tools that bridge <strong>web development</strong> and <strong>security operations</strong>.
+</p>
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+---
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## 📸 Screenshot
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Here’s a preview of the application:
 
-## Learning Laravel
+<p align="center">
+  <img src="public/CTH-home.png" alt="CyberToolsHub Screenshot" width="800" height="360"/>
+</p>
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+---
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+## 📖 Table of Contents
+- [📸 Screenshot](#-screenshot)
+- [📖 Table of Contents](#-table-of-contents)
+- [✨ Features](#-features)
+- [🛠️ Tech Stack](#️-tech-stack)
+- [📂 Project Structure](#-project-structure)
+- [⚡ Quick Start](#-quick-start)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Run Locally](#run-locally)
+  - [Build for Production](#build-for-production)
+- [⚙️ Configuration](#️-configuration)
+- [🧪 Testing](#-testing)
+- [🤝 Contributing](#-contributing)
+- [📜 License](#-license)
+- [👤 Author](#-author)
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+---
 
-## Laravel Sponsors
+## ✨ Features
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+- Built on **Laravel** for a solid backend foundation  
+- **Blade + Tailwind CSS** for clean, responsive, and modern UI  
+- **Alpine.js** for interactive components without heavy frameworks  
+- **Axios** for smooth async requests and API integrations  
+- **Vite** for fast builds and hot reloading in development  
+- Database-ready with **Eloquent ORM**  
+- CI/CD with GitHub Actions (see build badge above)  
 
-### Premium Partners
+> 💡 Future Roadmap: Integration of specific **cybersecurity utilities** (e.g., log analyzers, phishing analysis modules, dashboards for SOC use cases).
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+---
 
-## Contributing
+## 🛠️ Tech Stack
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+**Backend**: PHP 8+, Laravel  
+**Frontend**: Blade, TailwindCSS, Alpine.js, Axios  
+**Build Tools**: Vite, PostCSS, npm  
+**Testing**: PHPUnit, Laravel test suite  
+**Package Highlights**:
+- `@tailwindcss/forms`  
+- `alpinejs`  
+- `axios`  
+- `laravel-vite-plugin`
 
-## Code of Conduct
+---
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## 📂 Project Structure
+```text
+.
+├── app/                # Core application code
+├── resources/          # Views, components, and frontend assets
+├── routes/             # API & web routes
+├── database/           # Migrations & seeders
+├── tests/              # PHPUnit & Laravel tests
+├── public/             # Publicly accessible files
+├── config/             # Laravel configuration files
+├── .env.example        # Example environment config
+└── ...
+```
 
-## Security Vulnerabilities
+---
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## ⚡ Quick Start
 
-## License
+### Prerequisites
+- PHP >= 8.0  
+- Composer  
+- Node.js + npm  
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+### Installation
+```bash
+# Clone the repo
+git clone https://github.com/FS08/PreTPI-CyberToolsHub.git
+cd PreTPI-CyberToolsHub
+
+# Install dependencies
+composer install
+npm install
+
+# Set up environment
+cp .env.example .env
+php artisan key:generate
+# This command generates a unique APP_KEY used by Laravel to secure sessions and encrypted data.
+# It must be set before the application can run properly.
+
+# Configure DB in .env then run:
+php artisan migrate --seed
+```
+
+### Run Locally
+```bash
+npm run dev      # Build & watch frontend
+php artisan serve  # Start Laravel server (http://localhost:8000)
+```
+
+### Build for Production
+```bash
+npm run build
+```
+
+---
+
+## ⚙️ Configuration
+Most settings are managed via the `.env` file.  
+Key environment variables:
+```ini
+APP_NAME=CyberToolsHub
+APP_ENV=local
+APP_KEY=base64:...
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=cybertoolshub
+DB_USERNAME=root
+DB_PASSWORD=
+```
+
+🔑 **Note on APP_KEY**:  
+The `APP_KEY` is a secret key generated by Laravel and stored in `.env`.  
+It is critical for encrypting cookies, sessions, and other sensitive data.  
+Always generate it with `php artisan key:generate` and never share it publicly.
+
+---
+
+## 🧪 Testing
+Run the test suite with:
+```bash
+php artisan test
+# or
+vendor/bin/phpunit
+```
+
+GitHub Actions automatically runs tests on each push/PR to `main`.
+
+---
+
+## 🤝 Contributing
+Pull requests and discussions are welcome!  
+- Fork the repo  
+- Create your feature branch (`git checkout -b feature/AmazingFeature`)  
+- Commit changes (`git commit -m 'Add some AmazingFeature'`)  
+- Push to the branch (`git push origin feature/AmazingFeature`)  
+- Open a Pull Request  
+
+---
+
+## 📜 License
+This project is licensed under a **Custom Non-Commercial License**.  
+See the [LICENSE](LICENSE) file for details.
+
+---
+
+## 👤 Author
+**Fábio Santos**  
+📧 pro.fabiosantos08@gmail.com  
+🔗 [GitHub Profile](https://github.com/FS08)
+
+---
+
+🔥 *CyberToolsHub is more than just a school project — it’s a personal sandbox for exploring how modern web technologies can empower cybersecurity workflows.*  
